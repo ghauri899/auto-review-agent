@@ -30,7 +30,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Write review script
         run: |
@@ -52,7 +52,7 @@ jobs:
             process.exit(0);
           }
 
-          const MAX_DIFF_CHARS = 100_000;
+          const MAX_DIFF_CHARS = 200_000;
           const truncated = diff.length > MAX_DIFF_CHARS;
           const diffForReview = truncated ? diff.slice(0, MAX_DIFF_CHARS) : diff;
 
@@ -89,7 +89,7 @@ jobs:
 
           const userPrompt = `PR Title: ${prTitle || 'N/A'}
 
-          ${truncated ? 'Note: this diff was truncated to the first 100,000 characters.\n\n' : ''}Diff:
+          ${truncated ? 'Note: this diff was truncated to the first 200,000 characters.\n\n' : ''}Diff:
           \`\`\`diff
           ${diffForReview}
           \`\`\``;
@@ -103,7 +103,7 @@ jobs:
             },
             body: JSON.stringify({
               model: 'claude-sonnet-5',
-              max_tokens: 4000,
+              max_tokens: 10000,
               system: systemPrompt,
               messages: [{ role: 'user', content: userPrompt }],
             }),
