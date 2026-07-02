@@ -206,10 +206,17 @@ jobs:
           }
 
           const data = await response.json();
+
+          if (data.stop_reason === 'refusal') {
+            fs.writeFileSync('/tmp/review.txt', '⚠️ Claude declined to review this diff (safety classifier refusal). This is usually a false positive on security-adjacent code — re-run the workflow to retry.');
+            console.log('Claude refused the request (stop_reason: refusal). Wrote fallback message.');
+            process.exit(0);
+          }
+
           const textBlock = data.content?.find((block) => block.type === 'text');
 
           if (!textBlock) {
-            throw new Error('No text content in Claude response');
+            throw new Error(`No text content in Claude response. stop_reason: ${data.stop_reason}, content: ${JSON.stringify(data.content)}`);
           }
 
           let review;
