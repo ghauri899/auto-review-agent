@@ -1,0 +1,156 @@
+name: Automatic PR Code Review
+
+on:
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: Claude Code Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate PR diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+          echo "Diff size: $(wc -c < /tmp/pr.diff) bytes"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Write review script
+        run: |
+          cat <<'REVIEW_SCRIPT_EOF' > /tmp/claude-review.js
+          #!/usr/bin/env node
+
+          import fs from 'fs';
+
+          const diffPath = process.argv[2];
+          if (!diffPath) {
+            console.error('Usage: node claude-review.js <diff-file-path>');
+            process.exit(1);
+          }
+
+          const diff = fs.readFileSync(diffPath, 'utf8');
+
+          if (!diff.trim()) {
+            fs.writeFileSync('/tmp/review.txt', 'No changes detected against the base branch — nothing to review.');
+            process.exit(0);
+          }
+
+          const MAX_DIFF_CHARS = 100_000;
+          const truncated = diff.length > MAX_DIFF_CHARS;
+          const diffForReview = truncated ? diff.slice(0, MAX_DIFF_CHARS) : diff;
+
+          let prTitle = '';
+          try {
+            prTitle = process.env.PR_TITLE ? JSON.parse(process.env.PR_TITLE) : '';
+          } catch {
+            prTitle = process.env.PR_TITLE || '';
+          }
+
+          const systemPrompt = `You are an expert software engineer and security reviewer conducting a strict, low-noise review of a pull request diff.
+
+          Focus only on:
+          - Security vulnerabilities (injection, auth bypass, secrets exposure, XSS, SSRF, path traversal, insecure deserialization)
+          - Bugs and logic errors, race conditions, unhandled edge cases, guaranteed crashes
+          - Breaking changes to public APIs or contracts
+          - Data integrity issues (incorrect DB operations, data loss risk)
+          - Meaningful performance problems (N+1 queries, unbounded loops, memory leaks) with production-scale impact
+
+          Do not comment on formatting, naming conventions, or style preferences. Do not use hedge words like "might", "could", "consider", "maybe" — state findings directly, or omit them if you're not sure they're real. Do not praise the code or restate what it does beyond a one-line summary.
+
+          Respond in Markdown, ready to post directly as a GitHub PR comment, structured exactly as:
+
+          ## Summary
+          One or two sentences on what this PR does and its overall risk level.
+
+          ## Issues
+          For each real issue: file/line reference if visible in the diff, what's wrong, and a concrete minimal fix. Omit this section entirely if there are no real issues.
+
+          ## Notes
+          At most 3 minor, non-blocking observations. Omit this section if there are none.
+
+          Keep the whole review under 400 words unless there are multiple critical issues that require more explanation.`;
+
+          const userPrompt = `PR Title: ${prTitle || 'N/A'}
+
+          ${truncated ? 'Note: this diff was truncated to the first 100,000 characters.\n\n' : ''}Diff:
+          \`\`\`diff
+          ${diffForReview}
+          \`\`\``;
+
+          const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-api-key': process.env.ANTHROPIC_API_KEY,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: 'claude-sonnet-5',
+              max_tokens: 4000,
+              system: systemPrompt,
+              messages: [{ role: 'user', content: userPrompt }],
+            }),
+          });
+
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Anthropic API error ${response.status}: ${errText}`);
+          }
+
+          const data = await response.json();
+          const textBlock = data.content?.find((block) => block.type === 'text');
+
+          if (!textBlock) {
+            throw new Error('No text content in Claude response');
+          }
+
+          fs.writeFileSync('/tmp/review.txt', textBlock.text.trim());
+          console.log('Review written to /tmp/review.txt');
+          REVIEW_SCRIPT_EOF
+
+      - name: Run Claude code review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_TITLE: ${{ toJSON(github.event.pull_request.title) }}
+        run: node /tmp/claude-review.js /tmp/pr.diff
+
+      - name: Post review as PR comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('/tmp/review.txt', 'utf8');
+
+            const body = [
+              '## Automated Code Review 🤖',
+              '',
+              review,
+              '',
+              '---',
+              '*Reviewed by [Claude](https://claude.ai)*'
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
