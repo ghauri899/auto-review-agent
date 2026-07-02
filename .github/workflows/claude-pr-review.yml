@@ -72,27 +72,118 @@ jobs:
           - Data integrity issues (incorrect DB operations, data loss risk)
           - Meaningful performance problems (N+1 queries, unbounded loops, memory leaks) with production-scale impact
 
-          Do not comment on formatting, naming conventions, or style preferences. Do not use hedge words like "might", "could", "consider", "maybe" — state findings directly, or omit them if you're not sure they're real. Do not praise the code or restate what it does beyond a one-line summary.
+          Only classify something as CRITICAL or HIGH if you can state the concrete failure mode or exploit path in exactly one sentence. If you cannot, it is MEDIUM or lower.
 
-          Respond in Markdown, ready to post directly as a GitHub PR comment, structured exactly as:
+          Do not comment on formatting, naming conventions, or style preferences as must-fix. Do not use hedge words like "might", "could", "consider", "maybe" — state findings directly, or omit them if you're not sure they're real. Do not praise the code or restate what it does beyond a one-line summary.
 
-          ## Summary
-          One or two sentences on what this PR does and its overall risk level.
+          Return a single JSON object only. No markdown fences, no preamble, nothing outside the JSON.
 
-          ## Issues
-          For each real issue: file/line reference if visible in the diff, what's wrong, and a concrete minimal fix. Omit this section entirely if there are no real issues.
+          {
+            "summary": "2-3 sentence executive summary of the PR and its overall risk",
+            "score": <number 0.0-5.0, one decimal, overall quality score>,
+            "score_breakdown": {
+              "security": <0-5>,
+              "correctness": <0-5>,
+              "performance": <0-5>,
+              "maintainability": <0-5>,
+              "best_practices": <0-5>
+            },
+            "score_rationale": "1-2 sentences. Be direct. If a score is low, state the specific reason.",
+            "risk_level": "CRITICAL|HIGH|MEDIUM|LOW",
+            "issues": [
+              {
+                "severity": "CRITICAL|HIGH|MEDIUM|LOW",
+                "category": "SECURITY|BUG|PERFORMANCE|DATA_INTEGRITY|BREAKING_CHANGE|BEST_PRACTICE",
+                "file": "path/to/file.ext",
+                "line_reference": "L42" or "L42-L55" or null,
+                "title": "Short title, no hedge words",
+                "failure_mode": "Exactly one sentence: the concrete failure mode or exploit path. Required for CRITICAL/HIGH, null for MEDIUM/LOW.",
+                "description": "Why this is a problem, grounded in the diff",
+                "fix": "Minimal fix. Code snippet only if the fix is non-obvious."
+              }
+            ],
+            "test_evidence": {
+              "found": true or false,
+              "detail": "What test evidence is visible in the diff (test files changed, coverage notes, CI output), or null if none"
+            },
+            "best_practices_notes": ["at most 3 short, practical, non-blocking observations"]
+          }`;
 
-          ## Notes
-          At most 3 minor, non-blocking observations. Omit this section if there are none.
+          const userPrompt = `Review this Pull Request. Apply the strict low-noise standard: only report CRITICAL or HIGH if you can state the concrete failure mode in one sentence.
 
-          Keep the whole review under 400 words unless there are multiple critical issues that require more explanation.`;
-
-          const userPrompt = `PR Title: ${prTitle || 'N/A'}
+          PR Title: ${prTitle || 'N/A'}
 
           ${truncated ? 'Note: this diff was truncated to the first 200,000 characters.\n\n' : ''}Diff:
           \`\`\`diff
           ${diffForReview}
           \`\`\``;
+
+          function scoreBar(score) {
+            const filled = Math.round(score);
+            return '⭐'.repeat(filled) + '☆'.repeat(5 - filled);
+          }
+
+          function formatReviewComment(review) {
+            const riskEmoji = { CRITICAL: '🚨', HIGH: '🔴', MEDIUM: '🟡', LOW: '🟢' }[review.risk_level] || '⚪';
+            const issues = review.issues || [];
+            const mustFix = issues.filter((i) => i.severity === 'CRITICAL' || i.severity === 'HIGH');
+            const advisory = issues.filter((i) => i.severity === 'MEDIUM' || i.severity === 'LOW');
+            const breakdown = review.score_breakdown || {};
+
+            let md = `## 📊 Code Quality Score: ${review.score}/5 ${scoreBar(review.score)}\n\n`;
+            md += `| Dimension | Score |\n|-----------|-------|\n`;
+            md += `| 🔒 Security | ${breakdown.security ?? 'N/A'}/5 |\n`;
+            md += `| ✔️ Correctness | ${breakdown.correctness ?? 'N/A'}/5 |\n`;
+            md += `| ⚡ Performance | ${breakdown.performance ?? 'N/A'}/5 |\n`;
+            md += `| 🔧 Maintainability | ${breakdown.maintainability ?? 'N/A'}/5 |\n`;
+            md += `| 📐 Best Practices | ${breakdown.best_practices ?? 'N/A'}/5 |\n\n`;
+            if (review.score_rationale) md += `> ${review.score_rationale}\n\n`;
+
+            md += `**Risk Level:** ${riskEmoji} ${review.risk_level || 'N/A'}\n\n`;
+            md += `## 📝 Summary\n${review.summary || 'N/A'}\n\n`;
+
+            if (mustFix.length > 0) {
+              md += `## 🚫 Must-Fix Issues (${mustFix.length})\n\n`;
+              for (const issue of mustFix) {
+                const sevEmoji = issue.severity === 'CRITICAL' ? '🔴' : '🟠';
+                const location = issue.line_reference ? `\`${issue.file}:${issue.line_reference}\`` : `\`${issue.file}\``;
+                md += `<details>\n<summary>${sevEmoji} <b>${issue.title}</b> — ${location}</summary>\n\n`;
+                md += `**Severity:** ${issue.severity} &nbsp; **Category:** ${issue.category}\n\n`;
+                if (issue.failure_mode) md += `**Failure mode:** ${issue.failure_mode}\n\n`;
+                md += `**Detail:**\n${issue.description}\n\n`;
+                md += `**Fix:**\n${issue.fix}\n\n`;
+                md += `</details>\n\n`;
+              }
+            } else {
+              md += `## ✅ No Must-Fix Issues\nNo CRITICAL or HIGH severity issues found.\n\n`;
+            }
+
+            if (advisory.length > 0) {
+              md += `## 🔵 Advisory Issues (non-blocking)\n\n`;
+              for (const issue of advisory) {
+                const sevEmoji = issue.severity === 'MEDIUM' ? '🟡' : '🔵';
+                const location = issue.line_reference ? `\`${issue.file}:${issue.line_reference}\`` : `\`${issue.file}\``;
+                md += `<details>\n<summary>${sevEmoji} <b>${issue.title}</b> — ${location}</summary>\n\n`;
+                md += `**Category:** ${issue.category}\n\n${issue.description}\n\n**Suggestion:** ${issue.fix}\n\n`;
+                md += `</details>\n\n`;
+              }
+            }
+
+            if (review.test_evidence) {
+              md += `## 🧪 Test Evidence\n`;
+              md += review.test_evidence.found
+                ? `${review.test_evidence.detail}\n\n`
+                : `> ⚠️ No test results visible in this diff. Not required, but helpful before merge.\n\n`;
+            }
+
+            if (review.best_practices_notes?.length > 0) {
+              md += `## 💡 Best Practices (non-blocking)\n`;
+              for (const note of review.best_practices_notes.slice(0, 3)) md += `- ${note}\n`;
+              md += `\n`;
+            }
+
+            return md.trim();
+          }
 
           const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
@@ -121,8 +212,17 @@ jobs:
             throw new Error('No text content in Claude response');
           }
 
-          fs.writeFileSync('/tmp/review.txt', textBlock.text.trim());
-          console.log('Review written to /tmp/review.txt');
+          let review;
+          try {
+            const cleaned = textBlock.text.replace(/^```json\n?|\n?```$/g, '').trim();
+            review = JSON.parse(cleaned);
+          } catch (err) {
+            console.error('Failed to parse Claude response as JSON:', textBlock.text.slice(0, 500));
+            throw err;
+          }
+
+          fs.writeFileSync('/tmp/review.txt', formatReviewComment(review));
+          console.log(`Review written to /tmp/review.txt. Score: ${review.score}/5, risk: ${review.risk_level}`);
           REVIEW_SCRIPT_EOF
 
       - name: Run Claude code review
