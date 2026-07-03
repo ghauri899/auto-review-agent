@@ -76,6 +76,8 @@ jobs:
 
           Do not comment on formatting, naming conventions, or style preferences as must-fix. Do not use hedge words like "might", "could", "consider", "maybe" — state findings directly, or omit them if you're not sure they're real. Do not praise the code or restate what it does beyond a one-line summary.
 
+          Report at most 8 issues total, prioritizing CRITICAL and HIGH first. Keep each "description" and "fix" to 2-3 sentences — this output must fit in the token budget without being cut off mid-response.
+
           Return a single JSON object only. No markdown fences, no preamble, nothing outside the JSON.
 
           {
@@ -185,51 +187,69 @@ jobs:
             return md.trim();
           }
 
-          const response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-api-key': process.env.ANTHROPIC_API_KEY,
-              'anthropic-version': '2023-06-01',
-            },
-            body: JSON.stringify({
-              model: 'claude-sonnet-5',
-              max_tokens: 10000,
-              system: systemPrompt,
-              messages: [{ role: 'user', content: userPrompt }],
-            }),
+          async function main() {
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: 'claude-sonnet-5',
+                max_tokens: 16000,
+                system: systemPrompt,
+                messages: [{ role: 'user', content: userPrompt }],
+              }),
+            });
+
+            if (!response.ok) {
+              const errText = await response.text();
+              throw new Error(`Anthropic API error ${response.status}: ${errText}`);
+            }
+
+            const data = await response.json();
+
+            if (data.stop_reason === 'refusal') {
+              fs.writeFileSync('/tmp/review.txt', '⚠️ Claude declined to review this diff (safety classifier refusal). This is usually a false positive on security-adjacent code — re-run the workflow to retry.');
+              console.log('Claude refused the request (stop_reason: refusal). Wrote fallback message.');
+              return;
+            }
+
+            const textBlock = data.content?.find((block) => block.type === 'text');
+
+            if (!textBlock) {
+              throw new Error(`No text content in Claude response. stop_reason: ${data.stop_reason}, content: ${JSON.stringify(data.content)}`);
+            }
+
+            let review;
+            try {
+              const cleaned = textBlock.text.replace(/^```json\n?|\n?```$/g, '').trim();
+              review = JSON.parse(cleaned);
+            } catch (err) {
+              if (data.stop_reason === 'max_tokens') {
+                fs.writeFileSync('/tmp/review.txt', '⚠️ The review was too long and got cut off before it finished (hit the token limit). This usually means the PR has many findings — try splitting it into smaller PRs, or re-run the workflow.');
+                console.log('Response truncated at max_tokens before JSON completed. Wrote fallback message.');
+                return;
+              }
+              console.error('Failed to parse Claude response as JSON. Raw text:', textBlock.text);
+              throw err;
+            }
+
+            fs.writeFileSync('/tmp/review.txt', formatReviewComment(review));
+            console.log(`Review written to /tmp/review.txt. Score: ${review.score}/5, risk: ${review.risk_level}`);
+          }
+
+          main().catch((err) => {
+            // Catch-all: never let an unhandled error kill the job with no PR feedback.
+            // Full details go to the Action log; the PR comment gets a short, honest notice.
+            console.error('Claude review failed with an unexpected error:');
+            console.error(err.stack || err.message || String(err));
+            fs.writeFileSync(
+              '/tmp/review.txt',
+              `⚠️ The automated review could not be completed due to an unexpected error: ${err.message || String(err)}\n\nCheck the "Run Claude code review" step logs in the Actions run for full details.`
+            );
           });
-
-          if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Anthropic API error ${response.status}: ${errText}`);
-          }
-
-          const data = await response.json();
-
-          if (data.stop_reason === 'refusal') {
-            fs.writeFileSync('/tmp/review.txt', '⚠️ Claude declined to review this diff (safety classifier refusal). This is usually a false positive on security-adjacent code — re-run the workflow to retry.');
-            console.log('Claude refused the request (stop_reason: refusal). Wrote fallback message.');
-            process.exit(0);
-          }
-
-          const textBlock = data.content?.find((block) => block.type === 'text');
-
-          if (!textBlock) {
-            throw new Error(`No text content in Claude response. stop_reason: ${data.stop_reason}, content: ${JSON.stringify(data.content)}`);
-          }
-
-          let review;
-          try {
-            const cleaned = textBlock.text.replace(/^```json\n?|\n?```$/g, '').trim();
-            review = JSON.parse(cleaned);
-          } catch (err) {
-            console.error('Failed to parse Claude response as JSON:', textBlock.text.slice(0, 500));
-            throw err;
-          }
-
-          fs.writeFileSync('/tmp/review.txt', formatReviewComment(review));
-          console.log(`Review written to /tmp/review.txt. Score: ${review.score}/5, risk: ${review.risk_level}`);
           REVIEW_SCRIPT_EOF
 
       - name: Run Claude code review
