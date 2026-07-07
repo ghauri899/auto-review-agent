@@ -237,6 +237,7 @@ jobs:
             }
 
             fs.writeFileSync('/tmp/review.txt', formatReviewComment(review));
+            fs.writeFileSync('/tmp/review.json', JSON.stringify(review));
             console.log(`Review written to /tmp/review.txt. Score: ${review.score}/5, risk: ${review.risk_level}`);
           }
 
@@ -281,3 +282,74 @@ jobs:
               issue_number: context.issue.number,
               body
             });
+
+            // Inline review comments for CRITICAL/HIGH (must-fix) issues.
+            if (!fs.existsSync('/tmp/review.json')) return;
+
+            const parsedReview = JSON.parse(fs.readFileSync('/tmp/review.json', 'utf8'));
+            const mustFixIssues = (parsedReview.issues || []).filter(
+              (issue) => (issue.severity === 'CRITICAL' || issue.severity === 'HIGH') && issue.file && issue.line_reference
+            );
+
+            if (mustFixIssues.length === 0) return;
+
+            const INLINE_MARKER = '<!-- claude-inline-review -->';
+
+            function parseLineRef(ref) {
+              const match = /^L(\d+)(?:-L(\d+))?$/.exec(ref || '');
+              if (!match) return null;
+              const start = parseInt(match[1], 10);
+              const end = match[2] ? parseInt(match[2], 10) : start;
+              return end > start ? { start_line: start, start_side: 'RIGHT', line: end } : { line: start };
+            }
+
+            // Clean up inline comments from previous runs on this PR to avoid duplicates on re-push.
+            const existingComments = await github.rest.pulls.listReviewComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100
+            });
+
+            for (const comment of existingComments.data) {
+              if (comment.user?.type === 'Bot' && comment.body.includes(INLINE_MARKER)) {
+                try {
+                  await github.rest.pulls.deleteReviewComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: comment.id
+                  });
+                } catch (err) {
+                  console.log(`Could not delete stale inline comment ${comment.id}: ${err.message}`);
+                }
+              }
+            }
+
+            const headSha = context.payload.pull_request.head.sha;
+            const MAX_INLINE_COMMENTS = 15;
+
+            for (const issue of mustFixIssues.slice(0, MAX_INLINE_COMMENTS)) {
+              const lineInfo = parseLineRef(issue.line_reference);
+              if (!lineInfo) continue;
+
+              const sevEmoji = issue.severity === 'CRITICAL' ? '🔴' : '🟠';
+              const bodyLines = [`${sevEmoji} **${issue.severity}: ${issue.title}**`, ''];
+              if (issue.failure_mode) bodyLines.push(`**Failure mode:** ${issue.failure_mode}`, '');
+              bodyLines.push(`**Fix:** ${issue.fix}`, '', INLINE_MARKER);
+              const commentBody = bodyLines.join('\n');
+
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  commit_id: headSha,
+                  path: issue.file,
+                  side: 'RIGHT',
+                  body: commentBody,
+                  ...lineInfo
+                });
+              } catch (err) {
+                console.log(`Could not post inline comment on ${issue.file}:${issue.line_reference} — ${err.message}`);
+              }
+            }
