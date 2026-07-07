@@ -22,9 +22,16 @@ jobs:
           fetch-depth: 0
 
       - name: Generate PR diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git fetch origin ${{ github.base_ref }}
-          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+          # Diff the exact base/head commits GitHub recorded for this PR — avoids
+          # three-dot notation's merge-base resolution, which can pick the wrong
+          # common ancestor (and pull in unrelated history) on branches with a
+          # criss-cross topology (e.g. the feature branch merged the base branch
+          # into itself at some point).
+          git diff "$BASE_SHA" "$HEAD_SHA" > /tmp/pr.diff
           echo "Diff size: $(wc -c < /tmp/pr.diff) bytes"
 
       - name: Set up Node
