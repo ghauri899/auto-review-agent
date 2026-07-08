@@ -26,12 +26,18 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Diff the exact base/head commits GitHub recorded for this PR — avoids
-          # three-dot notation's merge-base resolution, which can pick the wrong
-          # common ancestor (and pull in unrelated history) on branches with a
-          # criss-cross topology (e.g. the feature branch merged the base branch
-          # into itself at some point).
-          git diff "$BASE_SHA" "$HEAD_SHA" > /tmp/pr.diff
+          # Diff from the actual fork point (merge-base) of this PR's base/head
+          # commits, not from base.sha directly. base.sha is the *live tip* of the
+          # target branch — if other PRs have merged into it since this branch was
+          # created, diffing straight against base.sha pulls in those unrelated
+          # catch-up changes as if they were part of this PR. Computing the
+          # merge-base of these two fixed, PR-specific commits (rather than
+          # resolving a moving branch ref like origin/dev) also avoids the
+          # "multiple merge bases" ambiguity seen on branches with a criss-cross
+          # history. This matches exactly what GitHub's own "Files changed" tab
+          # shows.
+          MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          git diff "$MERGE_BASE" "$HEAD_SHA" > /tmp/pr.diff
           echo "Diff size: $(wc -c < /tmp/pr.diff) bytes"
 
       - name: Set up Node
