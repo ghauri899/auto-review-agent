@@ -219,7 +219,18 @@ jobs:
               },
               body: JSON.stringify({
                 model: 'claude-sonnet-5',
-                max_tokens: 16000,
+                // Bumped from 16000: adaptive thinking now shares this budget, so
+                // there needs to be enough headroom left for the full JSON output
+                // even after Claude spends some of it deliberating.
+                max_tokens: 30000,
+                // Adaptive thinking with effort:medium keeps some reasoning depth
+                // (helps on subtler bugs) while biasing away from the kind of
+                // open-ended deliberation that previously consumed the entire
+                // token budget on a complex diff before any review text was
+                // written (stop_reason: max_tokens, empty thinking block, no
+                // text output at all).
+                thinking: { type: 'adaptive' },
+                output_config: { effort: 'medium' },
                 system: systemPrompt,
                 messages: [{ role: 'user', content: userPrompt }],
               }),
