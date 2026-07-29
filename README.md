@@ -1,4 +1,4 @@
-# auto-review-agent
+# Ghaurlock PR Review Agent
 
 Centralized Claude-powered PR review agent for all Staunchglobal org repos. Every project calls this repo's reusable workflow instead of keeping its own copy of the review logic — update the logic here once, it applies everywhere.
 
