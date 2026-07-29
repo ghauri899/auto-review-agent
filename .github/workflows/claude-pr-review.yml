@@ -301,7 +301,7 @@ jobs:
             const review = fs.readFileSync('/tmp/review.txt', 'utf8');
 
             const body = [
-              '## Automated Code Review 🤖',
+              '## Inspector G investigated this PR',
               '',
               review,
               '',
