@@ -100,10 +100,13 @@ jobs:
 
           Report at most 8 issues total, prioritizing CRITICAL and HIGH first. Keep each "description" and "fix" to 2-3 sentences — this output must fit in the token budget without being cut off mid-response.
 
+          Additionally, write one original, funny two-line Urdu couplet (in Urdu script) reacting to this specific PR's code quality — celebratory and playful if the score is high, gently roasting/teasing (never mean-spirited or insulting to the author) if the score is low. Keep it workplace-appropriate and lighthearted, not derogatory. Base it on the actual score and risk_level you're about to report, and where possible make a light, witty nod to the kind of issue found (e.g. security, a crash, messy code) without being technical about it — the humor should land even for someone who doesn't read the detailed review.
+
           Return a single JSON object only. No markdown fences, no preamble, nothing outside the JSON.
 
           {
             "summary": "2-3 sentence executive summary of the PR and its overall risk",
+            "urdu_couplet": "Two lines of original Urdu poetry (Urdu script) reacting humorously to this PR's quality/score, as described above",
             "score": <number 0.0-5.0, one decimal, overall quality score>,
             "score_breakdown": {
               "security": <0-5>,
@@ -154,7 +157,17 @@ jobs:
             const advisory = issues.filter((i) => i.severity === 'MEDIUM' || i.severity === 'LOW');
             const breakdown = review.score_breakdown || {};
 
-            let md = `## 📊 Code Quality Score: ${review.score}/5 ${scoreBar(review.score)}\n\n`;
+            let md = '';
+            if (review.urdu_couplet) {
+              const coupletLines = review.urdu_couplet
+                .split('\n')
+                .filter((line) => line.trim())
+                .map((line) => `> *${line.trim()}*`)
+                .join('\n>\n');
+              md += `📜 **Sher for Your PR**\n\n${coupletLines}\n\n---\n\n`;
+            }
+
+            md += `## 📊 Code Quality Score: ${review.score}/5 ${scoreBar(review.score)}\n\n`;
             md += `| Dimension | Score |\n|-----------|-------|\n`;
             md += `| 🔒 Security | ${breakdown.security ?? 'N/A'}/5 |\n`;
             md += `| ✔️ Correctness | ${breakdown.correctness ?? 'N/A'}/5 |\n`;
