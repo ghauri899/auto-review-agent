@@ -153,79 +153,129 @@ jobs:
           ${diffForReview}
           \`\`\``;
 
-          function scoreBar(score) {
-            const filled = Math.round(score);
-            return '⭐'.repeat(filled) + '☆'.repeat(5 - filled);
+          // --- Shields.io badge + progress-bar helpers -------------------------------
+          // Literal '-' and ' ' are field separators in a shields.io static badge URL,
+          // so label/message text has to be escaped before it's interpolated.
+          function shieldEscape(s) {
+            return String(s).replace(/-/g, '--').replace(/_/g, '__').replace(/ /g, '_');
+          }
+
+          function badge(label, message, color) {
+            const l = encodeURIComponent(shieldEscape(label));
+            const m = encodeURIComponent(shieldEscape(message));
+            return `![${label}: ${message}](https://img.shields.io/badge/${l}-${m}-${color}?style=for-the-badge&labelColor=1a1a2e)`;
+          }
+
+          function scoreColor(score) {
+            if (score >= 4.5) return '2ea043';
+            if (score >= 3.5) return '57ab5a';
+            if (score >= 2.5) return 'e3b341';
+            if (score >= 1.5) return 'e0823d';
+            return 'da3633';
+          }
+
+          const RISK_COLOR = { CRITICAL: 'da3633', HIGH: 'e0823d', MEDIUM: 'e3b341', LOW: '2ea043' };
+          const RISK_EMOJI = { CRITICAL: '🚨', HIGH: '🔴', MEDIUM: '🟡', LOW: '🟢' };
+
+          function progressBar(score, max = 5, width = 10) {
+            const filled = Math.round((score / max) * width);
+            return '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, width - filled));
+          }
+
+          function severityMeta(severity) {
+            return {
+              CRITICAL: { emoji: '🔴', label: 'CRITICAL' },
+              HIGH: { emoji: '🟠', label: 'HIGH' },
+              MEDIUM: { emoji: '🟡', label: 'MEDIUM' },
+              LOW: { emoji: '🔵', label: 'LOW' },
+            }[severity] || { emoji: '⚪', label: severity || 'UNKNOWN' };
+          }
+
+          function issueCard(issue, { open }) {
+            const { emoji } = severityMeta(issue.severity);
+            const location = issue.line_reference ? `${issue.file}:${issue.line_reference}` : issue.file;
+            let card = `<details${open ? ' open' : ''}>\n`;
+            card += `<summary>${emoji} <b>${issue.title}</b> &nbsp;<sub><code>${location}</code></sub></summary>\n\n`;
+            card += `&nbsp;\n\n`;
+            card += `| | |\n|:--|:--|\n`;
+            card += `| **Severity** | ${issue.severity} |\n`;
+            card += `| **Category** | ${issue.category} |\n`;
+            if (issue.failure_mode) card += `| **Failure mode** | ${issue.failure_mode} |\n`;
+            card += `\n**What's wrong**\n\n${issue.description}\n\n`;
+            card += `**Suggested fix**\n\n${issue.fix}\n\n`;
+            card += `</details>\n\n`;
+            return card;
           }
 
           function formatReviewComment(review) {
-            const riskEmoji = { CRITICAL: '🚨', HIGH: '🔴', MEDIUM: '🟡', LOW: '🟢' }[review.risk_level] || '⚪';
             const issues = review.issues || [];
             const mustFix = issues.filter((i) => i.severity === 'CRITICAL' || i.severity === 'HIGH');
             const advisory = issues.filter((i) => i.severity === 'MEDIUM' || i.severity === 'LOW');
             const breakdown = review.score_breakdown || {};
+            const riskEmoji = RISK_EMOJI[review.risk_level] || '⚪';
+            const riskColor = RISK_COLOR[review.risk_level] || '8b949e';
 
             let md = '';
+
             if (review.urdu_couplet) {
-              const coupletLines = review.urdu_couplet
-                .split('\n')
-                .filter((line) => line.trim())
-                .map((line) => `> *${line.trim()}*`)
-                .join('\n>\n');
-              md += `📜 **2 lines for your PR**\n\n${coupletLines}\n\n---\n\n`;
+              const lines = review.urdu_couplet.split('\n').map((l) => l.trim()).filter(Boolean);
+              md += `<div align="center">\n\n`;
+              md += lines.map((l) => `*${l}*`).join('<br>\n');
+              md += `\n\n</div>\n\n---\n\n`;
             }
 
-            md += `## 📊 Code Quality Score: ${review.score}/5 ${scoreBar(review.score)}\n\n`;
-            md += `| Dimension | Score |\n|-----------|-------|\n`;
-            md += `| 🔒 Security | ${breakdown.security ?? 'N/A'}/5 |\n`;
-            md += `| ✔️ Correctness | ${breakdown.correctness ?? 'N/A'}/5 |\n`;
-            md += `| ⚡ Performance | ${breakdown.performance ?? 'N/A'}/5 |\n`;
-            md += `| 🔧 Maintainability | ${breakdown.maintainability ?? 'N/A'}/5 |\n`;
-            md += `| 📐 Best Practices | ${breakdown.best_practices ?? 'N/A'}/5 |\n\n`;
-            if (review.score_rationale) md += `> ${review.score_rationale}\n\n`;
+            const scoreBadge = badge('Quality Score', `${review.score}/5`, scoreColor(review.score));
+            const riskBadge = badge('Risk', review.risk_level || 'N/A', riskColor);
 
-            md += `**Risk Level:** ${riskEmoji} ${review.risk_level || 'N/A'}\n\n`;
-            md += `## 📝 Summary\n${review.summary || 'N/A'}\n\n`;
+            md += `<div align="center">\n\n${scoreBadge} ${riskBadge}\n\n</div>\n\n`;
+
+            md += `> **${riskEmoji} ${review.summary || 'N/A'}**\n\n`;
+
+            md += `<details open>\n<summary><b>📊 Score Breakdown</b></summary>\n\n&nbsp;\n\n`;
+            md += `| Dimension | | Score |\n|:--|:--|:--:|\n`;
+            const dims = [
+              ['🔒 Security', breakdown.security],
+              ['✔️ Correctness', breakdown.correctness],
+              ['⚡ Performance', breakdown.performance],
+              ['🔧 Maintainability', breakdown.maintainability],
+              ['📐 Best Practices', breakdown.best_practices],
+            ];
+            for (const [label, value] of dims) {
+              const bar = value == null ? '—' : `\`${progressBar(value)}\``;
+              md += `| ${label} | ${bar} | ${value ?? 'N/A'}/5 |\n`;
+            }
+            md += `\n`;
+            if (review.score_rationale) md += `*${review.score_rationale}*\n\n`;
+            md += `</details>\n\n---\n\n`;
 
             if (mustFix.length > 0) {
-              md += `## 🚫 Must-Fix Issues (${mustFix.length})\n\n`;
-              for (const issue of mustFix) {
-                const sevEmoji = issue.severity === 'CRITICAL' ? '🔴' : '🟠';
-                const location = issue.line_reference ? `\`${issue.file}:${issue.line_reference}\`` : `\`${issue.file}\``;
-                md += `<details>\n<summary>${sevEmoji} <b>${issue.title}</b> — ${location}</summary>\n\n`;
-                md += `**Severity:** ${issue.severity} &nbsp; **Category:** ${issue.category}\n\n`;
-                if (issue.failure_mode) md += `**Failure mode:** ${issue.failure_mode}\n\n`;
-                md += `**Detail:**\n${issue.description}\n\n`;
-                md += `**Fix:**\n${issue.fix}\n\n`;
-                md += `</details>\n\n`;
-              }
+              md += `### 🚫 Must-Fix Issues (${mustFix.length})\n\n`;
+              for (const issue of mustFix) md += issueCard(issue, { open: true });
             } else {
-              md += `## ✅ No Must-Fix Issues\nNo CRITICAL or HIGH severity issues found.\n\n`;
+              md += `### ✅ No Must-Fix Issues\n\nNo CRITICAL or HIGH severity issues found.\n\n`;
             }
 
             if (advisory.length > 0) {
-              md += `## 🔵 Advisory Issues (non-blocking)\n\n`;
-              for (const issue of advisory) {
-                const sevEmoji = issue.severity === 'MEDIUM' ? '🟡' : '🔵';
-                const location = issue.line_reference ? `\`${issue.file}:${issue.line_reference}\`` : `\`${issue.file}\``;
-                md += `<details>\n<summary>${sevEmoji} <b>${issue.title}</b> — ${location}</summary>\n\n`;
-                md += `**Category:** ${issue.category}\n\n${issue.description}\n\n**Suggestion:** ${issue.fix}\n\n`;
-                md += `</details>\n\n`;
-              }
+              md += `### 🔵 Advisory Issues (${advisory.length}, non-blocking)\n\n`;
+              for (const issue of advisory) md += issueCard(issue, { open: false });
             }
 
+            const footerBits = [];
             if (review.test_evidence) {
-              md += `## 🧪 Test Evidence\n`;
-              md += review.test_evidence.found
-                ? `${review.test_evidence.detail}\n\n`
-                : `> ⚠️ No test results visible in this diff. Not required, but helpful before merge.\n\n`;
+              footerBits.push(
+                `**🧪 Test Evidence**\n${
+                  review.test_evidence.found
+                    ? review.test_evidence.detail
+                    : '⚠️ No test results visible in this diff. Not required, but helpful before merge.'
+                }`
+              );
             }
-
             if (review.best_practices_notes?.length > 0) {
-              md += `## 💡 Best Practices (non-blocking)\n`;
-              for (const note of review.best_practices_notes.slice(0, 3)) md += `- ${note}\n`;
-              md += `\n`;
+              footerBits.push(
+                `**💡 Best Practices**\n${review.best_practices_notes.slice(0, 3).map((n) => `- ${n}`).join('\n')}`
+              );
             }
+            if (footerBits.length > 0) md += `---\n\n${footerBits.join('\n\n')}\n\n`;
 
             return md.trim();
           }
@@ -322,12 +372,21 @@ jobs:
             const review = fs.readFileSync('/tmp/review.txt', 'utf8');
 
             const body = [
-              '## Inspector G investigated this PR',
+              '<div align="center">',
+              '',
+              `<svg xmlns="http://www.w3.org/2000/svg" width="205" height="48" fill="none" viewBox="0 0 205 48"><path fill="#fff" d="M81.38 34.162c1.422.617 3.642 1.168 6.02 1.168 2.967 0 4.537-1.107 4.537-3.019 0-1.937-1.483-2.738-4.23-3.385-4.445-1.015-6.67-2.677-6.67-6.466 0-3.691 2.41-6.465 7.596-6.465 2.716 0 4.169.398 5.96 1.076l-.216 3.941c-1.851-.617-3.457-.984-5.56-.984-2.654 0-3.954 1.107-3.954 2.616 0 1.417.926 2.187 4.046 2.957 4.323 1.015 6.854 2.524 6.854 6.557 0 3.82-2.378 6.74-8.153 6.74-3.028 0-4.665-.524-6.455-1.228l.225-3.508zM99.994 25.729h-2.747V22.25h2.967l.434-4.216h2.931v4.216h4.542v3.478h-4.542v7.169c0 1.968.987 2.676 2.471 2.676a6.66 6.66 0 002.066-.305l.276 3.202c-.741.275-1.882.428-2.966.428-3.985 0-5.432-2.249-5.432-5.787v-7.383zM116.914 25.632c-1.974 0-3.831.556-5.156 1.198l-.276-3.6c1.422-.77 3.458-1.356 5.806-1.356 4.91 0 6.884 2.371 6.884 6.277v10.376H120.5v-2.31c-1.171 1.54-2.655 2.677-5.248 2.677-2.778 0-4.849-1.479-4.849-4.217 0-3.324 2.44-4.43 6.332-5.078 1.484-.245 2.379-.464 3.09-.8.496-.215.588-.495.588-.985-.01-1.29-1.059-2.182-3.499-2.182zm.466 6.129c-2.097.397-3.213.923-3.213 2.554 0 1.418 1.177 2.096 2.625 2.096 1.851 0 3.15-1.168 3.703-2.494v-3.14c-.614.367-1.76.734-3.115.984zM142.576 38.532h-3.519v-2.401h-.092c-.926 1.662-2.471 2.768-4.88 2.768-4.199 0-6.174-2.86-6.174-6.802v-9.85h3.581v8.928c0 2.554 1.048 4.4 3.678 4.4 2.593 0 3.831-1.938 3.831-4.62v-8.708h3.58v16.285h-.005zM147.082 22.247h3.52v2.462h.092c.956-1.693 2.624-2.83 5.125-2.83 4.261 0 6.174 2.86 6.174 6.802v9.851h-3.581V30.16c0-2.585-1.11-4.462-3.831-4.462-2.624 0-3.923 1.816-3.923 4.615v8.219h-3.581V22.247h.005zM178.325 37.915c-1.14.586-2.685.984-4.322.984-5.253 0-8.772-3.233-8.772-8.586 0-4.926 3.181-8.434 8.552-8.434 1.79 0 3.304.398 4.445.923l-.307 3.63c-.987-.525-2.286-.8-3.734-.8-3.212 0-5.217 2.03-5.217 4.895 0 3.08 2.102 5.048 5.279 5.048a8.796 8.796 0 003.8-.862l.276 3.202zM189.287 25.54c-2.624 0-3.924 1.815-3.924 4.615v8.372h-3.58V15.139h3.519v9.417h.092c.926-1.632 2.563-2.677 5.033-2.677 4.292 0 6.271 2.86 6.271 6.802v9.85h-3.58v-8.524c0-2.585-1.115-4.467-3.831-4.467zM67.079 22.73l-.256-1.198-1.207.245a43.394 43.394 0 00-7.151 2.106V12.63h-1.238c-3.253 0-6.307 1.26-8.598 3.554a12.139 12.139 0 00-2.578 3.783c-2.834-7.572-6.599-15.424-6.84-15.929l-1.007-2.095-1.181 2.004c-3.335 5.675-5.683 11.13-7.3 15.622a12.132 12.132 0 00-2.383-3.37 12.103 12.103 0 00-8.599-3.554h-1.237V23.99a42.928 42.928 0 00-7.427-2.218l-1.207-.245-.256 1.204c-.03.142-2.819 14.077 8.89 20.349v.025l.695.337c.742.362 1.525.678 2.348.969l.118.046.102.03c2.578.867 5.535 1.382 8.839 1.525.655.03 1.32.04 2.005.04 1.939 0 4.01-.117 6.169-.346l.061-.005.061.005c2.164.23 4.23.346 6.174.346.783 0 1.545-.02 2.282-.056 4.48-.224 8.322-1.132 11.421-2.702l.676-.342v-.025c11.401-6.333 8.654-20.054 8.624-20.196zm-16.696-4.797a9.567 9.567 0 015.601-2.749v9.765a39.62 39.62 0 00-7.1 4.288c-.281-1.453-.741-3.141-1.32-4.936a9.556 9.556 0 012.82-6.368zM37.99 7.266c2.358 5.114 8.072 17.963 8.665 23.78-.409.358-.808.725-1.202 1.097-4.02 3.824-6.414 7.648-7.606 9.892-1.166-2.188-3.473-5.88-7.32-9.612a42.74 42.74 0 00-1.508-1.381c.245-1.25 2.445-11.921 8.971-23.776zM25.591 17.953a9.596 9.596 0 012.767 5.741 76.696 76.696 0 00-1.499 5.584 40.006 40.006 0 00-6.875-4.197V15.2a9.646 9.646 0 015.606 2.753zM10.853 24.48a40.618 40.618 0 016.65 2.192v13.542c-7.09-4.594-6.987-12.65-6.65-15.734zm18.864 19.059c-.496-.02-.982-.051-1.457-.092l-.471-.046c-.312-.03-.624-.061-.93-.097-.185-.02-.364-.05-.548-.076a33.673 33.673 0 01-.803-.117c-.19-.031-.374-.067-.563-.102a31.366 31.366 0 01-.731-.143c-.19-.041-.374-.082-.558-.128l-.68-.168a74.95 74.95 0 01-.542-.153c-.215-.061-.43-.127-.64-.199-.174-.056-.348-.112-.516-.173-.205-.072-.41-.148-.61-.23a13.883 13.883 0 01-.485-.193c-.072-.03-.133-.062-.205-.092V27.84a37.456 37.456 0 018.814 6.353c3.723 3.61 5.928 7.24 6.966 9.218-2.138.169-4.169.215-6.04.128zm10.205-.128c1.064-2.024 3.35-5.782 7.238-9.473a37.265 37.265 0 018.823-6.241v13.705c-.072.036-.143.067-.215.102-.153.067-.312.133-.47.2l-.624.244c-.164.061-.328.117-.497.178-.214.072-.434.143-.66.215-.173.05-.342.102-.516.152-.23.067-.466.128-.7.184a27.678 27.678 0 01-1.289.285l-.543.108c-.271.046-.547.086-.823.132-.174.026-.348.056-.522.077-.317.04-.64.076-.962.107-.148.015-.291.035-.445.046-.48.04-.967.076-1.463.102a50.503 50.503 0 01-6.332-.123zm18.542-3.385V26.55a39.576 39.576 0 016.368-2.076c.338 3.05.445 10.937-6.368 15.552z"></path></svg>`,
+              '',
+              '### 🕵️ Inspector G — Automated Code Review',
+              '',
+              '</div>',
               '',
               review,
               '',
-              '---',
-              '*Reviewed by [Claude](https://claude.ai)*'
+              '<div align="center">',
+              '',
+              '<sub>Reviewed by <b>Inspector G</b> · powered by <a href="https://claude.ai">Claude</a></sub>',
+              '',
+              '</div>'
             ].join('\n');
 
             await github.rest.issues.createComment({
