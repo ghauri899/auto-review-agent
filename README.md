@@ -1,6 +1,6 @@
 # Ghaurlock PR Review Agent
 
-Centralized Claude-powered PR review agent for all Staunchglobal org repos. Every project calls this repo's reusable workflow instead of keeping its own copy of the review logic — update the logic here once, it applies everywhere.
+Centralized Claude-powered PR review agent for all  org repos. Every project calls this repo's reusable workflow instead of keeping its own copy of the review logic — update the logic here once, it applies everywhere.
 
 ## How it works
 
@@ -10,7 +10,7 @@ Centralized Claude-powered PR review agent for all Staunchglobal org repos. Ever
 
 ## One-time org setup
 
-Since this repo is private, allow other org repos to call its reusable workflow: in **this repo's** Settings → Actions → General → Access, set "Accessible from repositories in the 'Staunchglobal' organization" (or list specific repos). Without this, other repos' `uses: Staunchglobal/auto-review-agent/...` calls will fail with a permissions error.
+Since this repo is private, allow other org repos to call its reusable workflow: in **this repo's** Settings → Actions → General → Access, set "Accessible from repositories in the '' organization" (or list specific repos). 
 
 ## Adding review to a new repo
 
