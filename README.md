@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   review:
-    uses: Staunchglobal/auto-review-agent/.github/workflows/claude-pr-review.yml@main
+    uses: ghauri899/auto-review-agent/.github/workflows/claude-pr-review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
