@@ -100,21 +100,10 @@ jobs:
 
           Report at most 8 issues total, prioritizing CRITICAL and HIGH first. Keep each "description" and "fix" to 2-3 sentences — this output must fit in the token budget without being cut off mid-response.
 
-          Additionally, write one original two-line Urdu couplet (in Urdu script) reacting to this specific PR's code quality. This must be genuinely funny, sharp, and top-class — written with the energy of a stand-up comedian doing a roast, or a witty Urdu satirist, not a generic greeting-card verse. Hard requirements:
-          - The two lines MUST rhyme — the ending words need a real matching qafia/sound, not just thematic similarity. If the lines don't rhyme, rewrite them until they do.
-          - It must land as a joke with a punchline in the second line, not just a flowery description. Favor a clever twist, unexpected comparison, or wordplay over a plain statement.
-          - Tone scales with the score: a high score gets a proud, cocky, celebratory roast (bragging on the code's behalf); a low score gets a biting, comedic roast of the bugs/mess found — sharp and funny, not cruel to the person. Never insult the developer personally, but the CODE is fair game to roast hard.
-          - Where natural, weave in a witty nod to the actual kind of issue found (security hole, crash, spaghetti logic, missing tests) — but keep it accessible, not technical jargon.
-          - Do not reuse these examples verbatim — they only illustrate the required rhyme quality and comedic tone:
-            - High score: "کوڈ ہے صاف چمکتا جیسے دھوپ میں شبنم کا قطرہ، ڈھونڈنے نکلا بگ کو ڈیبگر، مل نہ سکا کوئی خطرہ۔"
-            - Low score: "کوڈ میں بگ بھرے ہیں جیسے بریانی میں تیل، ری ویو کر کے تھک گیا میں، یار یہ کوئی کھیل؟"
-          Write a fresh, original couplet every time — never copy the examples above.
-
           Return a single JSON object only. No markdown fences, no preamble, nothing outside the JSON.
 
           {
             "summary": "2-3 sentence executive summary of the PR and its overall risk",
-            "urdu_couplet": "Two rhyming lines of original Urdu poetry (Urdu script), roast-style stand-up comedian energy, per the hard requirements above — must actually rhyme and have a punchline",
             "score": <number 0.0-5.0, one decimal, overall quality score>,
             "score_breakdown": {
               "security": <0-5>,
@@ -216,13 +205,6 @@ jobs:
             const riskColor = RISK_COLOR[review.risk_level] || '8b949e';
 
             let md = '';
-
-            if (review.urdu_couplet) {
-              const lines = review.urdu_couplet.split('\n').map((l) => l.trim()).filter(Boolean);
-              md += `<div align="center">\n\n`;
-              md += lines.map((l) => `*${l}*`).join('<br>\n');
-              md += `\n\n</div>\n\n---\n\n`;
-            }
 
             const scoreBadge = badge('Quality Score', `${review.score}/5`, scoreColor(review.score));
             const riskBadge = badge('Risk', review.risk_level || 'N/A', riskColor);
