@@ -269,7 +269,7 @@ jobs:
                 'anthropic-version': '2023-06-01',
               },
               body: JSON.stringify({
-                model: 'claude-sonnet-5',
+                model: 'claude-opus-5-5',
                 // Bumped from 16000: adaptive thinking now shares this budget, so
                 // there needs to be enough headroom left for the full JSON output
                 // even after Claude spends some of it deliberating.
