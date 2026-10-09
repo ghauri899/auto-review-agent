@@ -7,7 +7,7 @@ Centralized Claude-powered PR review agent for all Staunchglobal org repos. Ever
 1. This repo hosts the reusable workflow at `.github/workflows/claude-pr-review.yml`. That file is a thin orchestrator: it checks out the PR, then runs the `inspector-g` composite action via GitHub's self-repository `$/` syntax. `$/` resolves to **this** private repo at the exact commit the caller pinned — no extra checkout, no PAT, and a SHA-pinned caller cannot silently pick up newer scripts from `main`.
 2. The review logic lives in real files under `src/` (prompts, diff assembly, Claude client, comment formatting, GitHub posting). The composite action at `.github/actions/inspector-g/` wires those files together.
 3. Each project repo has a tiny caller workflow that triggers on `pull_request` and calls this repo's workflow via `workflow_call`.
-4. The caller workflow's job checks out the PR; the composite action generates the diff, reviews it, writes the review into the **pull request description** (always at the top), and keeps a small bot-only checkpoint comment for `head_sha` / issue ids. CRITICAL/HIGH findings also get inline comments on the diff.
+4. The caller workflow's job checks out the PR; the composite action generates the diff, reviews it, writes the review into the **pull request description** (always at the top), and keeps a small bot-only checkpoint comment for `head_sha` / issue ids. CRITICAL, HIGH, and MEDIUM findings also get inline comments on the exact lines, with a one-click **Commit suggestion** fix where the fix is small.
 
 This repo is **private**. Callers never need to check it out themselves — the only cross-repo operation is the `uses:` reference to the reusable workflow, which GitHub resolves once org access is granted (see below).
 
@@ -19,12 +19,15 @@ This repo is **private**. Callers never need to check it out themselves — the 
 .github/actions/inspector-g/action.yml    # composite action (step orchestration)
 src/
   prompts.js           # system + user prompt
+  diff-lines.js        # line-numbered diff + "did the PR change this line?" scope check
+  repo-context.js      # full touched files, usages elsewhere, team rules file
+  verify.js            # second-pass verification of new findings
   assemble-diff.js     # diff parsing + size cap
   claude-client.js     # Anthropic API + JSON parse
   scoring.js           # score + risk derived from the open-issue ledger
   format-comment.js    # review markdown
   collect-context.js   # previous review + human dismissals
-  post-comment.js      # PR description + checkpoint + inline must-fix
+  post-comment.js      # PR description + checkpoint + inline comments
   review.js            # CLI entry: diff → Claude → /tmp/review.txt
 scripts/               # git diff helpers
 test/                  # node:test unit tests
@@ -91,6 +94,51 @@ Continuity across runs does not come from narrowing the diff. It comes from the 
 - A diff over `MAX_DIFF_CHARS` drops whole files rather than slicing mid-hunk, and names the omitted files in the prompt.
 
 The cost of this choice is real: a long-lived PR re-reads its full diff on every push. If that ever needs tuning, lower `output_config.effort` in `src/claude-client.js` or tighten the pathspecs in `scripts/diff-pathspecs.sh` — do not reintroduce incremental scanning.
+
+### What the review looks like
+
+The review opens with a one-line verdict anyone can read — `🚫 Not ready to merge — 2 blockers` or `✅ Ready to merge · 1 suggestion` — then the score badges and, from the second run on, a score timeline (`#1 1.5 → #2 3.9 📈`). Below that:
+
+- **🧭 What this pull request does** — a plain-English overview for non-engineers and one line per changed file (collapsed).
+- **🗺️ How the change flows** — a Mermaid diagram of the changed flow (collapsed), only when the PR moves a request or data across three or more files (`MIN_DIAGRAM_FILES`). Diagrams that are not a `sequenceDiagram` or `flowchart`, are oversized, or carry directives are dropped rather than rendered as an error box.
+- **Must-fix issues** behind a red (CRITICAL) or amber (HIGH) GitHub alert box, then advisory issues. A finding that has an inline comment shows as one line here — title, a link to the cited lines, and **💬 details & fix** linking to that comment — so its write-up appears once, on the code. Findings without an inline comment (LOW, past the inline cap, or on a line GitHub cannot comment on) keep their full collapsible card.
+- **📊 Score Breakdown** — collapsed at the bottom; the headline already carries the verdict.
+
+Every `file:line` is a permalink to those lines at the reviewed commit, so it still points at the right code after later pushes. Severity marks are the same everywhere a finding appears: 🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM, 🔵 LOW.
+
+The Actions run page gets a job summary (verdict plus a table of open findings), and findings without an inline comment are added as annotations, which show in the run's Checks tab and on the diff. This needs no extra token permission. A pass/fail status for the PR is left to the merge gate, since failing the job is what blocks merging.
+
+### Inline comments and one-click fixes
+
+Every open CRITICAL, HIGH, and MEDIUM finding (up to `MAX_INLINE_COMMENTS`) is also posted on its line of the diff, all in one review so the author gets one notification. LOW findings stay in the description only. When a fix is a small change to a few contiguous lines the PR changed, the comment carries a GitHub suggestion block: the author presses **Commit suggestion** and the fix is applied. Suggestions are only offered when every replaced line is in one hunk of the current diff and at least one was changed by the PR; otherwise the comment carries the written fix alone.
+
+A comment that is unchanged since the last run is left in place rather than deleted and re-posted, so pushing does not re-notify anyone about findings they have already seen.
+
+When a finding is fixed or dismissed, its thread is not deleted: Inspector G replies (`✅ Resolved — as of abc1234, Inspector G no longer finds this problem.` or `☑️ Closed — marked as False positive by @someone`) and resolves the thread, so the discussion stays on the PR and the open threads are the open findings. A comment whose finding moved to a different line is still replaced.
+
+### Only what the pull request introduces
+
+Inspector G flags problems the PR's own code creates — never pre-existing issues in code the PR did not change, however serious. Two gates enforce this between Claude's raw findings and the PR:
+
+1. **Scope check (deterministic, free).** The diff Claude reads carries new-file line numbers in a left gutter, and every new finding must cite them. A finding is kept only if it points at a file the PR touches, on or within two lines of a line the PR added or deleted. Anything else is dropped before it is published. An unchanged caller that the PR newly breaks is reported against the changed line that breaks it.
+2. **Verification pass.** A second model (`VERIFY_MODEL` in `src/constants.js`, Sonnet by default) tries to disprove each surviving new finding and separately judges whether it would already exist on the base branch. Rejected and pre-existing findings are dropped. If the verifier errors or skips a finding, the finding is kept — a broken second pass must never hide a real bug.
+
+Both gates apply to **new** findings only. A finding already published on an earlier run is never silently dropped; it closes by being fixed or dismissed. Dropped findings are listed in the Actions log, and the review shows a one-line count (`🛡️ 3 possible findings were double-checked and left out…`).
+
+### What Claude sees besides the diff
+
+Read-only context, which Claude is told never to report on:
+
+- **Full content of each modified file** after the change, so a hunk is judged with the code around it (`MAX_CONTEXT_*` budgets in `src/constants.js`; new files are already whole in the diff).
+- **Usages elsewhere in the repo** of functions the PR defines or changes, so a changed signature is checked against callers the PR did not touch.
+- **Team rules** from `.github/inspector-g.md` in the reviewed repo, read from the **base** branch so a PR cannot rewrite the rules it is reviewed under. Plain prose, for example:
+
+  ```markdown
+  - Input is validated at the API gateway; do not flag missing validation in handlers under src/handlers/.
+  - console.log is allowed in scripts/.
+  ```
+
+- **Past dismissals from other PRs in the same repo.** When an org owner, member, or collaborator dismisses a finding, later reviews in that repo stop raising the same kind of concern. Dismissals by anyone else still apply to their own PR but teach the bot nothing.
 
 ### How the score is calculated
 

@@ -123,6 +123,10 @@ function compactIssues(issues, includeDescription) {
       compact.description = String(issue.description || '').slice(0, 800);
       compact.fix = String(issue.fix || '').slice(0, 600);
       compact.failure_mode = issue.failure_mode ? String(issue.failure_mode).slice(0, 300) : null;
+      // Valid for head_sha only. A same-commit re-run reuses them; a new
+      // commit recomputes both from the fresh diff.
+      compact.anchor = issue.anchor || null;
+      compact.suggestion = issue.suggestion || null;
     }
     return compact;
   });

@@ -433,7 +433,7 @@ describe('runReview', () => {
     // unverified rather than presented as freshly confirmed.
     assert.equal(result.review.issues.every((issue) => issue.carried_forward === true), true);
     assert.match(fs.store[PATHS.reviewTxt], /carried forward/);
-    assert.match(fs.store[PATHS.reviewTxt], /Not re-examined this run/);
+    assert.match(fs.store[PATHS.reviewTxt], /silence is not evidence it was fixed/);
   });
 
   it('closes carried-forward findings whose file the PR no longer touches', async () => {
