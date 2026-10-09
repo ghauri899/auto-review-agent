@@ -46,7 +46,7 @@ Return a single JSON object only. No markdown fences, no preamble, nothing outsi
 
 {
   "summary": {
-    "verdict": "One line, max 15 words. Risk verdict only — e.g. 'Risky reporting refactor — reconciliation may silently break.' Do not list individual findings.",
+    "verdict": "One line, max 15 words: what the PR does and its main concern, if any — e.g. 'Reporting refactor — reconciliation may silently break on a missing ledger row.' Do not name a risk level (low, moderate, high, risky, safe): the risk badge is computed from the findings, and a second opinion beside it only contradicts it. Do not list individual findings.",
     "context": "One line, max 20 words. What this PR changes. Leave empty string if unclear."
   },
   "walkthrough": {
