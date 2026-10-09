@@ -204,12 +204,10 @@ jobs:
             const riskEmoji = RISK_EMOJI[review.risk_level] || '⚪';
             const riskColor = RISK_COLOR[review.risk_level] || '8b949e';
 
-            let md = '';
-
             const scoreBadge = badge('Quality Score', `${review.score}/5`, scoreColor(review.score));
             const riskBadge = badge('Risk', review.risk_level || 'N/A', riskColor);
 
-            md += `<div align="center">\n\n${scoreBadge} ${riskBadge}\n\n</div>\n\n`;
+            let md = `<div align="center">\n\n${scoreBadge} ${riskBadge}\n\n</div>\n\n`;
 
             md += `> **${riskEmoji} ${review.summary || 'N/A'}**\n\n`;
 
