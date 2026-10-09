@@ -1,0 +1,69 @@
+name: Inspector G
+description: Claude-powered PR review — collect context, review the diff, post to the PR description
+
+inputs:
+  anthropic-api-key:
+    description: Anthropic API key
+    required: true
+  github-token:
+    description: Token with contents:read and pull-requests:write
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Generate PR diff
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: bash "${{ github.action_path }}/../../../scripts/generate-diff.sh"
+
+    - name: Collect previous review context
+      if: ${{ always() && !cancelled() }}
+      uses: actions/github-script@v7
+      env:
+        INSPECTOR_G_ROOT: ${{ github.action_path }}/../../..
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const path = require('node:path');
+          const { collectContext } = require(path.resolve(process.env.INSPECTOR_G_ROOT, 'src/collect-context.js'));
+          await collectContext({ github, context });
+
+    - name: Run Claude code review
+      if: ${{ success() }}
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        PR_TITLE: ${{ toJSON(github.event.pull_request.title) }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        REVIEW_CONTEXT_PATH: /tmp/review-context.json
+      run: node "${{ github.action_path }}/../../../src/review.js" /tmp/pr.diff
+
+    - name: Post review to pull request
+      if: ${{ always() && !cancelled() }}
+      uses: actions/github-script@v7
+      env:
+        INSPECTOR_G_ROOT: ${{ github.action_path }}/../../..
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const path = require('node:path');
+          const { postComment } = require(path.resolve(process.env.INSPECTOR_G_ROOT, 'src/post-comment.js'));
+          await postComment({ github, context });
+
+    - name: Fail if review did not complete
+      if: ${{ always() && !cancelled() }}
+      shell: bash
+      run: |
+        if [ ! -f /tmp/review.json ]; then
+          echo "Review did not complete (no review.json). Failing so required checks cannot pass on a missed review."
+          exit 1
+        fi

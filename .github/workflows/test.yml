@@ -1,0 +1,47 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      # No `actions/*` steps anywhere in this workflow: the Staunchglobal
+      # Actions policy only allows actions from repositories the org owns, so
+      # actions/checkout and actions/setup-node fail the run at startup.
+      # Plain git + the Node already on the runner image cover both.
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
+        run: |
+          set -euo pipefail
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git init -q .
+          git remote add origin "https://github.com/${REPO}.git"
+          # -c keeps the credential out of .git/config, matching the old
+          # persist-credentials: false.
+          git -c http.extraheader="AUTHORIZATION: basic ${auth}" \
+            fetch -q --depth=1 origin "$REF"
+          git checkout -q --detach FETCH_HEAD
+
+      - name: Check Node
+        run: |
+          set -euo pipefail
+          node --version
+          major=$(node -p 'process.versions.node.split(".")[0]')
+          if [ "$major" -lt 18 ]; then
+            echo "Need Node 18+ for the built-in test runner; runner has $(node --version)." >&2
+            exit 1
+          fi
+
+      - name: Run tests
+        run: npm test
