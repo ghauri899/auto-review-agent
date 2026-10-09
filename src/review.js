@@ -8,6 +8,9 @@ const { assembleReviewDiff, diffFilePaths } = require('./assemble-diff');
 const { SYSTEM_PROMPT, buildUserPrompt } = require('./prompts');
 const { requestReview, extractReviewJson } = require('./claude-client');
 const { formatReviewComment, rerunLink } = require('./format-comment');
+const { annotateDiff, changedLineMap, checkPrScope, inlinePlacement } = require('./diff-lines');
+const { gatherRepoContext } = require('./repo-context');
+const { verifyFindings } = require('./verify');
 
 function parsePrTitle(raw) {
   try {
@@ -102,10 +105,72 @@ function replayPrevious(previous, dismissals, headSha = null) {
       model_score: previous.model_score ?? previous.score,
       model_breakdown: previous.model_breakdown || previous.score_breakdown || null,
       score_rationale: previous.score_rationale || '',
+      walkthrough: previous.walkthrough || null,
+      diagram: previous.diagram || null,
       issues: previous.issues.map((issue) => ({ ...issue, status: issue.status === 'new' ? 'still_open' : issue.status })),
     },
     { previous, dismissals, assembled: { mode: 'rerun' }, headSha }
   );
+}
+
+// A finding is new unless it re-states one an earlier run published, by that
+// finding's id. Only new findings are screened below. Screening a mislabelled
+// old finding is harmless: a previous finding Claude does not mention is
+// carried forward by assignIssueIds, so it cannot be dropped this way.
+function isNewFinding(issue, previous) {
+  if (!['still_open', 'resolved'].includes(issue.status)) return true;
+  const known = [...(previous?.issues || []), ...(previous?.resolved || [])];
+  return !known.some((item) => item?.id != null && issue.id != null && Number(item.id) === Number(issue.id));
+}
+
+// Two gates between Claude's raw findings and the pull request, both aimed at
+// one rule: Inspector G reports only problems the PR itself introduces.
+//   1. Scope — free and deterministic. A finding must cite a line the PR
+//      added or changed (src/diff-lines.js).
+//   2. Verification — a second model tries to disprove each survivor and
+//      judges whether it predates the PR (src/verify.js).
+async function screenNewFindings({ issues, previous, lineMap, assembled, repoContext, learned, apiKey, fetchImpl }) {
+  const carried = [];
+  const candidates = [];
+  const outOfScope = [];
+  for (const issue of issues || []) {
+    if (!isNewFinding(issue, previous)) {
+      carried.push(issue);
+      continue;
+    }
+    const scope = checkPrScope(issue, lineMap);
+    if (scope.inScope) candidates.push(issue);
+    else outOfScope.push({ issue, reason: scope.reason });
+  }
+
+  const verified = await verifyFindings({ candidates, assembled, repoContext, learned, apiKey, fetchImpl, redact: redactSecrets });
+
+  for (const { issue, reason } of outOfScope) {
+    console.log(`Dropped (outside this PR's changes: ${reason}): ${issue.file}:${issue.line_reference || '-'} ${issue.title}`);
+  }
+  for (const { issue, reason, note } of verified.rejected) {
+    console.log(`Dropped by verification (${reason}): ${issue.file}:${issue.line_reference || '-'} ${issue.title} — ${note}`);
+  }
+
+  return {
+    issues: [...carried, ...verified.kept],
+    filtered: {
+      out_of_scope: outOfScope.length + verified.rejected.filter((item) => item.reason === 'pre_existing').length,
+      not_confirmed: verified.rejected.filter((item) => item.reason === 'not_reproducible').length,
+      verified: verified.verified,
+    },
+  };
+}
+
+// Where each open finding's inline comment goes on the current head, and
+// whether its one-click suggestion is safe to offer. A finding carried forward
+// without a fresh verdict cites lines from an older commit, so it gets neither.
+function placeInline(issues, lineMap) {
+  for (const issue of issues || []) {
+    const placement = issue.carried_forward ? { anchor: null, suggestion: null } : inlinePlacement(issue, lineMap);
+    issue.anchor = placement.anchor;
+    issue.suggestion = placement.suggestion;
+  }
 }
 
 async function runReview({
@@ -115,6 +180,7 @@ async function runReview({
   readFile = (file) => fs.readFileSync(file, 'utf8'),
   exists = (file) => fs.existsSync(file),
   fetchImpl = fetch,
+  gitImpl = undefined,
 } = {}) {
   const retryLink = rerunLink(env);
   const retryHint = retryLink ? ` [↻ Re-run this review](${retryLink}) → **Re-run all jobs**.` : '';
@@ -158,7 +224,20 @@ async function runReview({
     return { kind: 'empty', review };
   }
 
-  const assembled = assembleReviewDiff({ fullDiff, maxChars: MAX_DIFF_CHARS });
+  const lineMap = changedLineMap(fullDiff);
+  const assembled = assembleReviewDiff({ fullDiff: annotateDiff(fullDiff), maxChars: MAX_DIFF_CHARS });
+  const repoContext = gatherRepoContext({
+    diff: fullDiff,
+    lineMap,
+    headSha: env.HEAD_SHA,
+    baseSha: env.BASE_SHA,
+    ...(gitImpl ? { git: gitImpl } : {}),
+  });
+  const learned = reviewContext.learned_dismissals || [];
+  console.log(
+    `Context: ${repoContext.files.length} full file(s), ${repoContext.usages.length} symbol usage set(s), ` +
+      `team rules: ${repoContext.rules ? 'yes' : 'no'}, learned dismissals: ${learned.length}`
+  );
 
   const prTitle = parsePrTitle(env.PR_TITLE);
   const userPrompt = redactSecrets(
@@ -167,6 +246,8 @@ async function runReview({
       assembled,
       previous,
       dismissals,
+      repoContext,
+      learned,
       maxChars: MAX_DIFF_CHARS,
     })
   );
@@ -198,6 +279,18 @@ async function runReview({
     return extracted;
   }
 
+  const screened = await screenNewFindings({
+    issues: extracted.review.issues,
+    previous,
+    lineMap,
+    assembled,
+    repoContext,
+    learned,
+    apiKey: env.ANTHROPIC_API_KEY,
+    fetchImpl,
+  });
+  extracted.review.issues = screened.issues;
+
   const review = finalizeReview(extracted.review, {
     previous,
     dismissals,
@@ -205,12 +298,15 @@ async function runReview({
     headSha: env.HEAD_SHA,
     prFiles: diffFilePaths(fullDiff),
   });
+  review.filtered = screened.filtered;
+  placeInline(review.issues, lineMap);
   writeFile(PATHS.reviewTxt, formatReviewComment(review, { env }));
   writeFile(PATHS.reviewJson, JSON.stringify(review));
   console.log(
     `Review written to ${PATHS.reviewTxt}. Mode: ${assembled.mode}, run #${review.run_count}, score: ${review.score}/5 ` +
       `(ledger ${review.ledger_score}/5, model ${review.model_score}/5), risk: ${review.risk_level}, ` +
-      `open issues: ${(review.issues || []).length} (${review.carried_forward_count} carried forward)`
+      `open issues: ${(review.issues || []).length} (${review.carried_forward_count} carried forward), ` +
+      `dropped: ${screened.filtered.out_of_scope} outside the PR's changes, ${screened.filtered.not_confirmed} not confirmed`
   );
   return { kind: 'ok', review };
 }
@@ -242,5 +338,8 @@ if (require.main === module) {
 
 module.exports = {
   runReview,
+  isNewFinding,
+  screenNewFindings,
+  placeInline,
   parsePrTitle,
 };

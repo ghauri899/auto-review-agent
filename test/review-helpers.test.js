@@ -323,7 +323,7 @@ describe('buildUserPrompt', () => {
     assert.match(prompt, /Previous Inspector G findings/);
     assert.match(prompt, /Human dismissals/);
     assert.match(prompt, /truncated to fit 12 characters/);
-    assert.match(prompt, /Diff \(complete pull request\)/);
+    assert.match(prompt, /Diff \(complete pull request, new-file line numbers/);
   });
 });
 
@@ -339,7 +339,7 @@ describe('post-comment helpers', () => {
     fix: 'Catch it.',
   };
 
-  it('posts inline comments only for uncovered must-fix issues', () => {
+  it('posts inline comments for uncovered issues down to MEDIUM', () => {
     const selected = selectMustFixIssues(
       {
         issues: [
@@ -347,6 +347,7 @@ describe('post-comment helpers', () => {
           { ...issue, title: 'Already discussed', line_reference: 'L4' },
           { ...issue, title: 'Dismissed', line_reference: 'L5' },
           { ...issue, severity: 'MEDIUM', title: 'Advisory', line_reference: 'L6' },
+          { ...issue, severity: 'LOW', title: 'Nitpick', line_reference: 'L8' },
           { ...issue, status: 'resolved', title: 'Fixed', line_reference: 'L7' },
         ],
       },
@@ -355,8 +356,7 @@ describe('post-comment helpers', () => {
         dismissals: [{ file: 'a.js', title: 'Dismissed' }],
       }
     );
-    assert.equal(selected.length, 1);
-    assert.equal(selected[0].title, 'Crash');
+    assert.deepEqual(selected.map((item) => item.title), ['Crash', 'Advisory']);
   });
 
   it('skips carried-forward issues whose line reference is from an older commit', () => {
@@ -389,7 +389,7 @@ describe('post-comment helpers', () => {
       ],
     });
     assert.match(md, /carried forward/);
-    assert.match(md, /Not re-examined this run/);
+    assert.match(md, /silence is not evidence it was fixed/);
     // Detail was compacted out of the checkpoint: say so rather than
     // rendering an empty "What's wrong" section.
     assert.match(md, /Detail for this finding was dropped/);

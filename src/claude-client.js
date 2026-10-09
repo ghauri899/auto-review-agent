@@ -12,7 +12,7 @@ const REVIEW_JSON_SCHEMA = {
   additionalProperties: false,
   // No risk_level: it is max(severity) over the open ledger, which the code
   // derives. Asking for it let the model contradict the findings listed below it.
-  required: ['summary', 'score', 'score_breakdown', 'score_rationale', 'issues'],
+  required: ['summary', 'walkthrough', 'diagram', 'score', 'score_breakdown', 'score_rationale', 'issues'],
   properties: {
     summary: {
       type: 'object',
@@ -23,6 +23,27 @@ const REVIEW_JSON_SCHEMA = {
         context: { type: 'string' },
       },
     },
+    walkthrough: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['overview', 'files'],
+      properties: {
+        overview: { type: 'string' },
+        files: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['file', 'change'],
+            properties: {
+              file: { type: 'string' },
+              change: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    diagram: { type: ['string', 'null'] },
     score: { type: 'number' },
     score_breakdown: {
       type: 'object',
@@ -53,6 +74,7 @@ const REVIEW_JSON_SCHEMA = {
           'failure_mode',
           'description',
           'fix',
+          'suggestion',
         ],
         properties: {
           id: { type: ['integer', 'null'] },
@@ -68,6 +90,20 @@ const REVIEW_JSON_SCHEMA = {
           failure_mode: { type: ['string', 'null'] },
           description: { type: 'string' },
           fix: { type: 'string' },
+          suggestion: {
+            anyOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                additionalProperties: false,
+                required: ['line_reference', 'code'],
+                properties: {
+                  line_reference: { type: 'string' },
+                  code: { type: 'string' },
+                },
+              },
+            ],
+          },
         },
       },
     },
@@ -86,6 +122,10 @@ async function requestReview({
   apiKey,
   systemPrompt,
   userPrompt,
+  model = CLAUDE_MODEL,
+  maxTokens = CLAUDE_MAX_TOKENS,
+  schema = REVIEW_JSON_SCHEMA,
+  effort = 'medium',
   fetchImpl = fetch,
   waitImpl = defaultWait,
   attempts = CLAUDE_RETRY_ATTEMPTS,
@@ -103,12 +143,12 @@ async function requestReview({
         },
         signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify({
-          model: CLAUDE_MODEL,
-          max_tokens: CLAUDE_MAX_TOKENS,
+          model,
+          max_tokens: maxTokens,
           thinking: { type: 'adaptive' },
           output_config: {
-            effort: 'medium',
-            format: { type: 'json_schema', schema: REVIEW_JSON_SCHEMA },
+            effort,
+            format: { type: 'json_schema', schema },
           },
           system: systemPrompt,
           messages: [{ role: 'user', content: userPrompt }],

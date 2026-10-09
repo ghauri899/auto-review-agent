@@ -44,6 +44,8 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         PR_TITLE: ${{ toJSON(github.event.pull_request.title) }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Team rules (.github/inspector-g.md) are read from the base branch.
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
         REVIEW_CONTEXT_PATH: /tmp/review-context.json
       run: node "${{ github.action_path }}/../../../src/review.js" /tmp/pr.diff
 
@@ -57,7 +59,7 @@ runs:
         script: |
           const path = require('node:path');
           const { postComment } = require(path.resolve(process.env.INSPECTOR_G_ROOT, 'src/post-comment.js'));
-          await postComment({ github, context });
+          await postComment({ github, context, core });
 
     - name: Fail if review did not complete
       if: ${{ always() && !cancelled() }}
