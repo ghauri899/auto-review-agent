@@ -251,7 +251,7 @@ function truncate(text, max) {
 }
 
 // One line for a finding whose full write-up lives in its inline comment.
-// Repeating the card here is what made the description twice as long as it
+// Repeating the card here is what made the review twice as long as it
 // needed to be.
 function findingRow(issue, { threadUrl, links }) {
   const { emoji } = severityMeta(issue.severity);
@@ -268,7 +268,7 @@ function findingRow(issue, { threadUrl, links }) {
 
 // Findings with an inline thread collapse to a row; the rest (LOW, past the
 // inline cap, or cited on a line GitHub cannot comment on) keep their card,
-// since the description is the only place their detail appears.
+// since the review is the only place their detail appears.
 function findingList(issues, { threads, links, open }) {
   const rows = issues.filter((issue) => threadFor(issue, threads));
   const cards = issues.filter((issue) => !threadFor(issue, threads));
@@ -465,7 +465,7 @@ function jobSummary(review, { env = process.env, headSha = env.HEAD_SHA, threads
     }
     md += '\n';
   }
-  md += `<sub>The full review is in the pull request description.</sub>\n`;
+  md += `<sub>The full review is in the Inspector G comment on the pull request.</sub>\n`;
   return md;
 }
 

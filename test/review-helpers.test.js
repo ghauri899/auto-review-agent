@@ -405,7 +405,7 @@ describe('post-comment helpers', () => {
     assert.match(body, /<!-- claude-inline-review -->/);
   });
 
-  it('strips the payload when the sticky comment would exceed the limit', () => {
+  it('shortens the review, not the data, when the comment would exceed the limit', () => {
     const hugeReview = 'x'.repeat(70_000);
     const visibleBody = `${STICKY_MARKER}\n${hugeReview}`;
     const payload = {
@@ -416,7 +416,9 @@ describe('post-comment helpers', () => {
       payload,
       sourceIssues: [{ title: 'Crash', description: 'y'.repeat(400) }],
     });
-    assert.equal(body.includes('inspector-g-data'), false);
+    assert.equal(body.includes('inspector-g-data'), true);
+    assert.match(body, /Review shortened to fit/);
+    assert.ok(body.length <= 65_000);
     assert.equal(body.startsWith(STICKY_MARKER), true);
   });
 });

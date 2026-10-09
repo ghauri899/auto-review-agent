@@ -7,7 +7,7 @@ Centralized Claude-powered PR review agent for all Staunchglobal org repos. Ever
 1. This repo hosts the reusable workflow at `.github/workflows/claude-pr-review.yml`. That file is a thin orchestrator: it checks out the PR, then runs the `inspector-g` composite action via GitHub's self-repository `$/` syntax. `$/` resolves to **this** private repo at the exact commit the caller pinned — no extra checkout, no PAT, and a SHA-pinned caller cannot silently pick up newer scripts from `main`.
 2. The review logic lives in real files under `src/` (prompts, diff assembly, Claude client, comment formatting, GitHub posting). The composite action at `.github/actions/inspector-g/` wires those files together.
 3. Each project repo has a tiny caller workflow that triggers on `pull_request` and calls this repo's workflow via `workflow_call`.
-4. The caller workflow's job checks out the PR; the composite action generates the diff, reviews it, writes the review into the **pull request description** (always at the top), and keeps a small bot-only checkpoint comment for `head_sha` / issue ids. CRITICAL, HIGH, and MEDIUM findings also get inline comments on the exact lines, with a one-click **Commit suggestion** fix where the fix is small.
+4. The caller workflow's job checks out the PR; the composite action generates the diff, reviews it, and posts the review as **one comment on the pull request**, edited in place after every push. The same comment carries hidden checkpoint data (`head_sha`, issue ids, dismissals) for the next run. CRITICAL, HIGH, and MEDIUM findings also get inline comments on the exact lines, with a one-click **Commit suggestion** fix where the fix is small.
 
 This repo is **private**. Callers never need to check it out themselves — the only cross-repo operation is the `uses:` reference to the reusable workflow, which GitHub resolves once org access is granted (see below).
 
@@ -27,7 +27,7 @@ src/
   scoring.js           # score + risk derived from the open-issue ledger
   format-comment.js    # review markdown
   collect-context.js   # previous review + human dismissals
-  post-comment.js      # PR description + checkpoint + inline comments
+  post-comment.js      # review comment (with checkpoint data) + inline comments
   review.js            # CLI entry: diff → Claude → /tmp/review.txt
 scripts/               # git diff helpers
 test/                  # node:test unit tests
@@ -66,7 +66,7 @@ Prefer pinning a commit SHA instead of `@main` once a revision is proven. No scr
 
 ## Using the review
 
-The Inspector G block is appended to the bottom of the PR description (the author's write-up stays on top, untouched). Findings are numbered (`3. Auth bypass`) and those numbers stay stable across runs.
+The review is a single Inspector G comment in the PR conversation, edited in place on every push so its link never changes and edits notify no one. When the verdict flips between **🚫 Not ready to merge** and **✅ Ready to merge**, a one-line comment is added at the bottom (`🕵️ Re-reviewed abc1234: ✅ Ready to merge — full review ↑`) so the change is not lost above later discussion. The PR description is never touched; pull requests reviewed by older versions have their old description block removed on the next run. Findings are numbered (`3. Auth bypass`) and those numbers stay stable across runs.
 
 Dismiss a finding by commenting on the PR. `N` is the number in front of the issue title (for example **3.** in `3. Auth bypass`) — it does not change on later reviews:
 
@@ -80,7 +80,7 @@ The review ends with a **↻ Re-run this review** link pointing at the Actions r
 
 Dismissed findings are never dropped from the review. They move to a **Marked not an issue by a reviewer** table that records the finding number, a verdict read from your wording (*False positive*, *By design*, *Not a bug*, *Not applicable*, *Won't fix*), the reason you typed, and your username — so every waved-off finding stays auditable across runs.
 
-Previously resolved findings accumulate in the review instead of disappearing after the next pass. The header shows the run count (`Review #4`). The author's own write-up stays at the top of the description, with the review below it after a horizontal rule.
+Previously resolved findings accumulate in the review instead of disappearing after the next pass. The header shows the run count (`Review #4`).
 
 ### What gets reviewed
 
@@ -110,7 +110,7 @@ The Actions run page gets a job summary (verdict plus a table of open findings),
 
 ### Inline comments and one-click fixes
 
-Every open CRITICAL, HIGH, and MEDIUM finding (up to `MAX_INLINE_COMMENTS`) is also posted on its line of the diff, all in one review so the author gets one notification. LOW findings stay in the description only. When a fix is a small change to a few contiguous lines the PR changed, the comment carries a GitHub suggestion block: the author presses **Commit suggestion** and the fix is applied. Suggestions are only offered when every replaced line is in one hunk of the current diff and at least one was changed by the PR; otherwise the comment carries the written fix alone.
+Every open CRITICAL, HIGH, and MEDIUM finding (up to `MAX_INLINE_COMMENTS`) is also posted on its line of the diff, all in one review so the author gets one notification. LOW findings appear in the review comment only. When a fix is a small change to a few contiguous lines the PR changed, the comment carries a GitHub suggestion block: the author presses **Commit suggestion** and the fix is applied. Suggestions are only offered when every replaced line is in one hunk of the current diff and at least one was changed by the PR; otherwise the comment carries the written fix alone.
 
 A comment that is unchanged since the last run is left in place rather than deleted and re-posted, so pushing does not re-notify anyone about findings they have already seen.
 
@@ -159,13 +159,13 @@ So that a carried-forward finding can never get stuck open forever, it is closed
 
 Failing those, dismissing it by number always works.
 
-Do not delete the short `Inspector G checkpoint` comment — it is the bot-owned source of truth for `head_sha` and issue ids. The visible review is only in the description.
+Do not delete the Inspector G review comment — its hidden data is the bot-owned source of truth for `head_sha`, issue ids, and dismissals. If it is deleted, the next run starts over from review #1. When the review and the data together exceed GitHub's 65,000-character comment limit, the data is compacted first and the review text is shortened second; the data itself is never dropped.
 
 ## Updating the review logic
 
 Edit the files under `src/` (or the composite action / scripts). Every caller repo that tracks `@main` picks up the change on its next PR run.
 
-Tune review criteria in `src/prompts.js`. Change the PR description layout in `src/format-comment.js`. Leave `.github/workflows/claude-pr-review.yml` alone unless the caller-facing API itself needs to change.
+Tune review criteria in `src/prompts.js`. Change the review layout in `src/format-comment.js`. Leave `.github/workflows/claude-pr-review.yml` alone unless the caller-facing API itself needs to change.
 
 This repo runs `npm test` on pull requests via `.github/workflows/test.yml`.
 

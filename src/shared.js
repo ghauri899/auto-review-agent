@@ -406,6 +406,19 @@ function upsertPrBody(existingBody, reviewBlock, { start, end }) {
   return authorText ? `${authorText}\n\n${block}` : block;
 }
 
+// The pull request description without Inspector G's block. Reviews used to
+// be written there; they now live in the review comment, and this clears the
+// old copy out so a PR does not show two reviews.
+function removePrBlock(existingBody, { start, end }) {
+  const body = String(existingBody || '');
+  const startAt = body.indexOf(start);
+  if (startAt === -1) return body;
+  const endAt = body.indexOf(end, startAt);
+  const before = body.slice(0, startAt).replace(/\s+$/, '');
+  const after = endAt === -1 ? '' : body.slice(endAt + end.length).replace(/^\s+/, '');
+  return [before, after].filter(Boolean).join('\n\n');
+}
+
 function isCheckpointComment(comment) {
   const body = comment?.body || '';
   if (!body.includes(STICKY_MARKER)) return false;
@@ -438,5 +451,6 @@ module.exports = {
   assignIssueIds,
   redactSecrets,
   upsertPrBody,
+  removePrBlock,
   isCheckpointComment,
 };

@@ -8,7 +8,6 @@ const {
   BODY_START,
   BODY_END,
   COMMENT_LIMIT,
-  PR_BODY_LIMIT,
   MAX_INLINE_COMMENTS,
   MAX_ANNOTATIONS_PER_LEVEL,
   SEVERITY_EMOJI,
@@ -24,20 +23,24 @@ const {
   compactDismissed,
   parseLineRef,
   upsertPrBody,
+  removePrBlock,
   isCheckpointComment,
 } = require('./shared');
-const { fenceFor, formatReviewComment, findingLines, jobSummary } = require('./format-comment');
+const { fenceFor, formatReviewComment, findingLines, jobSummary, verdictHeadline } = require('./format-comment');
 
+// The review comment: one per pull request, edited in place after every push.
+// It also carries the hidden checkpoint data the next run starts from.
 function buildVisibleBody(review, runCount = 1) {
   return [
+    STICKY_MARKER,
     '🕵️ **Inspector G** · Automated Code Review',
     '',
     review,
     '',
-    `<sub>Reviewed by <b>Inspector G</b> · run <span>#</span>${runCount} · powered by <a href="https://claude.ai">Claude</a></sub>`,
+    `<sub>Reviewed by <b>Inspector G</b> · run <span>#</span>${runCount} · powered by <a href="https://claude.ai">Claude</a> · updated after every push. Please don't delete this comment: it holds the review's history.</sub>`,
     '',
     // Collapsed by default. The instructions are read once; the review is read
-    // every run, and six lines of blockquote pushed it down the description.
+    // every run.
     '<details>',
     '<summary><b>How to respond to a finding</b></summary>',
     '',
@@ -54,41 +57,37 @@ function buildVisibleBody(review, runCount = 1) {
   ].join('\n');
 }
 
-function buildCheckpointVisible(runCount) {
-  return [
-    STICKY_MARKER,
-    'Inspector G checkpoint — the review lives in the pull request description.',
-    '',
-    `Run #${runCount}. Do not delete this comment.`,
-  ].join('\n');
-}
+const TRUNCATED_NOTE =
+  "\n\n_Review shortened to fit GitHub's comment size limit. Findings with an inline comment are still on their lines._\n\n";
 
 function buildCommentBody({ visibleBody, payload, sourceIssues }) {
-  function bodyWithPayload(issuesFactory) {
-    const encoded = encodePayload({ ...payload, issues: issuesFactory() });
-    return `${visibleBody}\n\n<!-- inspector-g-data ${encoded} -->`;
-  }
+  const dataTag = () => `<!-- inspector-g-data ${encodePayload(payload)} -->`;
 
-  let body = bodyWithPayload(() => payload.issues);
-  if (body.length > COMMENT_LIMIT) {
-    payload.issues = compactIssues(sourceIssues, false);
-    payload.resolved = compactResolved(payload.resolved);
-    payload.dismissed = compactDismissed(payload.dismissed);
-    delete payload.summary;
-    // score_breakdown is derived, so it is recomputed on the next run;
-    // model_score / model_breakdown / score_history are the inputs that
-    // cannot be rebuilt, and are small enough to always keep.
-    delete payload.score_breakdown;
-    delete payload.score_rationale;
-    delete payload.walkthrough;
-    delete payload.diagram;
-    payload.score_history = (payload.score_history || []).slice(-5);
-    body = bodyWithPayload(() => payload.issues);
-  }
-  if (body.length > COMMENT_LIMIT) {
-    body = visibleBody;
-  }
-  return body;
+  let body = `${visibleBody}\n\n${dataTag()}`;
+  if (body.length <= COMMENT_LIMIT) return body;
+
+  // The hidden data shrinks first: the review is what people read.
+  payload.issues = compactIssues(sourceIssues, false);
+  payload.resolved = compactResolved(payload.resolved);
+  payload.dismissed = compactDismissed(payload.dismissed);
+  delete payload.summary;
+  // score_breakdown is derived, so it is recomputed on the next run;
+  // model_score / model_breakdown / score_history are the inputs that
+  // cannot be rebuilt, and are small enough to always keep.
+  delete payload.score_breakdown;
+  delete payload.score_rationale;
+  delete payload.walkthrough;
+  delete payload.diagram;
+  payload.score_history = (payload.score_history || []).slice(-5);
+  const tag = dataTag();
+  body = `${visibleBody}\n\n${tag}`;
+  if (body.length <= COMMENT_LIMIT) return body;
+
+  // Then the review text is cut, never the data: losing the data would reset
+  // finding numbers and dismissals on the next run.
+  const room = COMMENT_LIMIT - tag.length - TRUNCATED_NOTE.length;
+  if (room >= 2000) return `${visibleBody.slice(0, room)}${TRUNCATED_NOTE}${tag}`;
+  return visibleBody.slice(0, COMMENT_LIMIT);
 }
 
 function issueCovered(item, issue) {
@@ -113,7 +112,7 @@ function inlineAnchor(issue) {
 }
 
 // Findings that get a comment on their line: everything open down to MEDIUM.
-// LOW stays in the description only — a line comment is an interruption, and
+// LOW stays in the review comment only — a line comment is an interruption, and
 // a nitpick is not worth one. Most severe first, so the cap drops the least
 // important.
 function selectInlineIssues(parsedReview, reviewContext) {
@@ -128,7 +127,7 @@ function selectInlineIssues(parsedReview, reviewContext) {
       // Carried forward from an earlier run without being re-examined, so its
       // line_reference belongs to an older commit. Inline comments are anchored
       // to the new head SHA, where that line is unrelated code — or does not
-      // exist and the API 422s. It still shows in the description.
+      // exist and the API 422s. It still shows in the review comment.
       if (issue.carried_forward) return false;
       if (!inlineAnchor(issue)) return false;
       if (isDismissed(issue, dismissed)) return false;
@@ -226,53 +225,62 @@ async function upsertCheckpointComment({ github, context, reviewContext, body })
   }
 
   if (stickyId) {
-    await github.rest.issues.updateComment({
+    const { data } = await github.rest.issues.updateComment({
       owner: context.repo.owner,
       repo: context.repo.repo,
       comment_id: stickyId,
       body,
     });
-    console.log(`Updated checkpoint comment ${stickyId}`);
-    return;
+    console.log(`Updated review comment ${stickyId}`);
+    return data?.html_url || '';
   }
 
-  await github.rest.issues.createComment({
+  const { data } = await github.rest.issues.createComment({
     owner: context.repo.owner,
     repo: context.repo.repo,
     issue_number: context.issue.number,
     body,
   });
-  console.log('Created checkpoint comment');
+  console.log('Created review comment');
+  return data?.html_url || '';
 }
 
-async function upsertPrDescription({ github, context, reviewBlock }) {
-  const pullNumber = context.payload.pull_request?.number || context.issue.number;
+const isBlocking = (issue) => issue.status !== 'resolved' && (issue.severity === 'CRITICAL' || issue.severity === 'HIGH');
+
+// Editing the review comment notifies no one, and after a few pushes it sits
+// far up the conversation. When the verdict flips between "not ready" and
+// "ready", say so at the bottom with a link up to the review. Pushes that do
+// not change the verdict stay quiet.
+function verdictChangeNote({ previous, review, headSha, commentUrl }) {
+  if (!previous || !Array.isArray(previous.issues) || !review) return '';
+  const wasBlocked = previous.issues.some(isBlocking);
+  const nowBlocked = (review.issues || []).some(isBlocking);
+  if (wasBlocked === nowBlocked) return '';
+  const open = (review.issues || []).filter((issue) => issue.status !== 'resolved');
+  const headline = verdictHeadline(open).replace(/^#+\s*/, '');
+  const link = commentUrl ? ` — [full review ↑](${commentUrl})` : '';
+  return `🕵️ Re-reviewed \`${String(headSha || '').slice(0, 7)}\`: **${headline}**${link}`;
+}
+
+// Pull requests reviewed before the review moved into a comment still have a
+// copy in their description. Remove it once; the event payload says whether
+// there is anything to remove, so most runs make no API call here.
+async function removeDescriptionReview({ github, context }) {
+  if (!String(context.payload.pull_request?.body || '').includes(BODY_START)) return;
+  const pullNumber = context.payload.pull_request.number || context.issue.number;
   const { data: pr } = await github.rest.pulls.get({
     owner: context.repo.owner,
     repo: context.repo.repo,
     pull_number: pullNumber,
   });
-
-  let combined = upsertPrBody(pr.body || '', reviewBlock, { start: BODY_START, end: BODY_END });
-  if (combined.length > PR_BODY_LIMIT) {
-    const compactBlock = `${reviewBlock.slice(0, Math.max(0, PR_BODY_LIMIT - (pr.body || '').length - 200))}\n\n_Review truncated to fit the PR description._`;
-    combined = upsertPrBody(pr.body || '', compactBlock, { start: BODY_START, end: BODY_END });
-  }
-  if (combined.length > PR_BODY_LIMIT) {
-    combined = upsertPrBody('', reviewBlock.slice(0, PR_BODY_LIMIT - BODY_START.length - BODY_END.length - 20), {
-      start: BODY_START,
-      end: BODY_END,
-    });
-    console.log('PR description would exceed GitHub limit; wrote a truncated Inspector G block only');
-  }
-
+  if (!String(pr.body || '').includes(BODY_START)) return;
   await github.rest.pulls.update({
     owner: context.repo.owner,
     repo: context.repo.repo,
     pull_number: pullNumber,
-    body: combined,
+    body: removePrBlock(pr.body, { start: BODY_START, end: BODY_END }),
   });
-  console.log('Updated pull request description with Inspector G review');
+  console.log('Removed the old Inspector G review from the pull request description');
 }
 
 function inlineIdOf(comment) {
@@ -461,7 +469,7 @@ async function postInlineComments({ github, context, headSha, toPost, kept }) {
       pull_number: context.issue.number,
       commit_id: headSha,
       event: 'COMMENT',
-      body: `🕵️ **Inspector G** — line-by-line notes for \`${String(headSha).slice(0, 7)}\`. The full review is in the pull request description.`,
+      body: `🕵️ **Inspector G** — line-by-line notes for \`${String(headSha).slice(0, 7)}\`. The full review is in the Inspector G comment on this pull request.`,
       comments: toPost,
     });
     console.log(`Posted ${toPost.length} inline comment(s) in one review; kept ${kept} unchanged`);
@@ -550,16 +558,9 @@ async function postComment({ github, context, core = null, env = process.env }) 
   }
 
   const runCount = payload.run_count || 1;
-  const checkpointBody = buildCommentBody({
-    visibleBody: buildCheckpointVisible(runCount),
-    payload,
-    sourceIssues: reviewSucceeded ? parsedReview.issues : previous?.issues,
-  });
 
-  await upsertCheckpointComment({ github, context, reviewContext, body: checkpointBody });
-
-  // Inline comments go first: the description links each finding to its
-  // comment, and those URLs only exist once the comments do.
+  // Inline comments go first: the review links each finding to its comment,
+  // and those URLs only exist once the comments do.
   let threads = new Map();
   if (parsedReview && context.payload.pull_request) {
     try {
@@ -579,12 +580,31 @@ async function postComment({ github, context, core = null, env = process.env }) 
     }
   }
 
-  if (context.payload.pull_request || context.issue?.number) {
+  const body = buildCommentBody({
+    visibleBody: buildVisibleBody(reviewText, runCount),
+    payload,
+    sourceIssues: reviewSucceeded ? parsedReview.issues : previous?.issues,
+  });
+  const commentUrl = await upsertCheckpointComment({ github, context, reviewContext, body });
+
+  const note = reviewSucceeded ? verdictChangeNote({ previous, review: parsedReview, headSha, commentUrl }) : '';
+  if (note) {
     try {
-      await upsertPrDescription({ github, context, reviewBlock: buildVisibleBody(reviewText, runCount) });
+      await github.rest.issues.createComment({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: context.issue.number,
+        body: note,
+      });
     } catch (err) {
-      console.log(`Could not update PR description: ${err.message}`);
+      console.log(`Could not post the verdict change note: ${err.message}`);
     }
+  }
+
+  try {
+    await removeDescriptionReview({ github, context });
+  } catch (err) {
+    console.log(`Could not remove the old review from the PR description: ${err.message}`);
   }
 
   if (parsedReview) await publishRunSummary({ core, review: parsedReview, threads, env, headSha });
@@ -593,8 +613,9 @@ async function postComment({ github, context, core = null, env = process.env }) 
 module.exports = {
   postComment,
   buildVisibleBody,
-  buildCheckpointVisible,
   buildCommentBody,
+  verdictChangeNote,
+  removeDescriptionReview,
   buildPayload,
   selectInlineIssues,
   // Old name, kept for callers that still import it.
