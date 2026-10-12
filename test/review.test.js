@@ -541,7 +541,8 @@ describe('runReview', () => {
     assert.deepEqual(result.review.issues, []);
     assert.deepEqual(result.review.resolved.map((item) => item.id), [1]);
     assert.equal(result.review.risk_level, 'LOW');
-    assert.equal(result.review.score, 4);
+    // Nothing open, so the earlier model deduction has no finding behind it.
+    assert.equal(result.review.score, 5);
     assert.match(fs.store[PATHS.reviewTxt], /No Must-Fix Issues/);
   });
 
