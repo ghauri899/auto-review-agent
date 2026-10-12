@@ -81,7 +81,7 @@ const REVIEW_JSON_SCHEMA = {
           severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] },
           category: {
             type: 'string',
-            enum: ['SECURITY', 'BUG', 'PERFORMANCE', 'DATA_INTEGRITY', 'BREAKING_CHANGE', 'BEST_PRACTICE'],
+            enum: ['SECURITY', 'BUG', 'PERFORMANCE', 'DATA_INTEGRITY', 'BREAKING_CHANGE', 'MAINTAINABILITY', 'BEST_PRACTICE'],
           },
           file: { type: 'string' },
           line_reference: { type: ['string', 'null'] },

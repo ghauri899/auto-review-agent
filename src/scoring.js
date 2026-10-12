@@ -23,6 +23,7 @@ const CATEGORY_DIMENSION = {
   DATA_INTEGRITY: 'correctness',
   PERFORMANCE: 'performance',
   BREAKING_CHANGE: 'maintainability',
+  MAINTAINABILITY: 'maintainability',
   BEST_PRACTICE: 'best_practices',
 };
 
@@ -79,19 +80,27 @@ function countBySeverity(issues) {
 
 // Published score = the lower of what the ledger allows and what Claude
 // thought of the code it actually read. Taking the minimum keeps the badge
-// consistent with the findings listed under it on every run, while still
-// letting Claude mark down code that is messy but has no concrete findings.
+// consistent with the findings listed under it on every run.
+//
+// Claude's number only counts where a finding backs it: overall once anything
+// is open, per dimension once a finding in that dimension is open. A 4.5/5
+// with nothing listed under it told the author something was wrong without
+// saying what — and a deduction whose finding the verifier dropped would do
+// the same.
 function deriveScore({ issues, modelScore, modelBreakdown } = {}) {
   const open = openIssues(issues);
   const ledgerScore = round1(clampScore(5 - penaltyFor(open), 0));
-  const score = round1(Math.min(ledgerScore, clampScore(modelScore, 5)));
+  const backedModelScore = open.length ? clampScore(modelScore, 5) : 5;
+  const score = round1(Math.min(ledgerScore, backedModelScore));
 
   const breakdown = {};
   for (const dimension of DIMENSIONS) {
     const forDimension = open.filter((issue) => CATEGORY_DIMENSION[categoryOf(issue)] === dimension);
     const ledgerDimension = clampScore(5 - penaltyFor(forDimension), 0);
     const modelDimension =
-      modelBreakdown && modelBreakdown[dimension] != null ? clampScore(modelBreakdown[dimension], 5) : 5;
+      forDimension.length && modelBreakdown && modelBreakdown[dimension] != null
+        ? clampScore(modelBreakdown[dimension], 5)
+        : 5;
     breakdown[dimension] = round1(Math.min(ledgerDimension, modelDimension));
   }
 
