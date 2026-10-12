@@ -30,10 +30,11 @@ describe('deriveRiskLevel', () => {
 });
 
 describe('deriveScore', () => {
-  it('is the model score when nothing is open', () => {
+  // paramount-rx#667: 4.5/5 published with no finding to say what was wrong.
+  it('ignores a model deduction when nothing is open to explain it', () => {
     const { score, ledger_score } = deriveScore({ issues: [], modelScore: 3.5 });
     assert.equal(ledger_score, 5);
-    assert.equal(score, 3.5);
+    assert.equal(score, 5);
   });
 
   it('penalises open findings by severity', () => {
@@ -60,8 +61,8 @@ describe('deriveScore', () => {
     assert.equal(score, 2);
   });
 
-  it('keeps the model score as a ceiling', () => {
-    const { score } = deriveScore({ issues: [], modelScore: 2.5 });
+  it('keeps the model score as a ceiling once a finding is open', () => {
+    const { score } = deriveScore({ issues: [issue('LOW')], modelScore: 2.5 });
     assert.equal(score, 2.5);
   });
 
@@ -71,8 +72,8 @@ describe('deriveScore', () => {
   });
 
   it('clamps an out-of-range model score', () => {
-    assert.equal(deriveScore({ issues: [], modelScore: 9 }).score, 5);
-    assert.equal(deriveScore({ issues: [], modelScore: -3 }).score, 0);
+    assert.equal(deriveScore({ issues: [issue('LOW')], modelScore: 9 }).score, 4.9);
+    assert.equal(deriveScore({ issues: [issue('LOW')], modelScore: -3 }).score, 0);
   });
 
   it('charges each finding to the dimension its category belongs to', () => {
@@ -89,12 +90,33 @@ describe('deriveScore', () => {
 
   it('cannot rate a dimension above what the model gave it', () => {
     const { score_breakdown } = deriveScore({
-      issues: [],
+      issues: [issue('LOW', 'BUG'), issue('LOW', 'MAINTAINABILITY')],
       modelScore: 5,
       modelBreakdown: { security: 5, correctness: 2, performance: 5, maintainability: 3, best_practices: 5 },
     });
     assert.equal(score_breakdown.correctness, 2);
     assert.equal(score_breakdown.maintainability, 3);
+  });
+
+  it('ignores a dimension deduction with no finding in that dimension', () => {
+    const { score_breakdown } = deriveScore({
+      issues: [issue('LOW', 'BUG')],
+      modelScore: 4,
+      modelBreakdown: { security: 4.5, correctness: 4, performance: 4.5, maintainability: 4.5, best_practices: 4.5 },
+    });
+    assert.deepEqual(score_breakdown, {
+      security: 5,
+      correctness: 4,
+      performance: 5,
+      maintainability: 5,
+      best_practices: 5,
+    });
+  });
+
+  it('charges MAINTAINABILITY findings to maintainability', () => {
+    const { score_breakdown } = deriveScore({ issues: [issue('MEDIUM', 'MAINTAINABILITY')], modelScore: 5 });
+    assert.equal(score_breakdown.maintainability, 4.6);
+    assert.equal(score_breakdown.best_practices, 5);
   });
 
   it('cannot rate a dimension above what the ledger allows', () => {
