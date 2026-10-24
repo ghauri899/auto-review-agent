@@ -2,6 +2,8 @@
 
 const {
   CLAUDE_MODEL,
+  REVIEW_EFFORT,
+  FALLBACK_BETA,
   CLAUDE_MAX_TOKENS,
   CLAUDE_FETCH_TIMEOUT_MS,
   CLAUDE_RETRY_ATTEMPTS,
@@ -125,7 +127,7 @@ async function requestReview({
   model = CLAUDE_MODEL,
   maxTokens = CLAUDE_MAX_TOKENS,
   schema = REVIEW_JSON_SCHEMA,
-  effort = 'medium',
+  effort = REVIEW_EFFORT,
   fetchImpl = fetch,
   waitImpl = defaultWait,
   attempts = CLAUDE_RETRY_ATTEMPTS,
@@ -140,11 +142,13 @@ async function requestReview({
           'content-type': 'application/json',
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
+          'anthropic-beta': FALLBACK_BETA,
         },
         signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify({
           model,
           max_tokens: maxTokens,
+          fallbacks: 'default',
           thinking: { type: 'adaptive' },
           output_config: {
             effort,
