@@ -2,6 +2,8 @@
 
 const {
   CLAUDE_MODEL,
+  REVIEW_EFFORT,
+  FALLBACK_BETA,
   CLAUDE_MAX_TOKENS,
   CLAUDE_FETCH_TIMEOUT_MS,
   CLAUDE_RETRY_ATTEMPTS,
@@ -125,7 +127,7 @@ async function requestReview({
   model = CLAUDE_MODEL,
   maxTokens = CLAUDE_MAX_TOKENS,
   schema = REVIEW_JSON_SCHEMA,
-  effort = 'medium',
+  effort = REVIEW_EFFORT,
   fetchImpl = fetch,
   waitImpl = defaultWait,
   attempts = CLAUDE_RETRY_ATTEMPTS,
@@ -140,11 +142,13 @@ async function requestReview({
           'content-type': 'application/json',
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
+          'anthropic-beta': FALLBACK_BETA,
         },
         signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify({
           model,
           max_tokens: maxTokens,
+          fallbacks: 'default',
           thinking: { type: 'adaptive' },
           output_config: {
             effort,
@@ -222,9 +226,24 @@ function extractReviewJson(data) {
   }
 }
 
+// Token counts for one call, as recorded in the run's usage log. Thinking is
+// billed as output and already counted in output_tokens.
+function usageOf(call, model, data) {
+  const usage = data?.usage || {};
+  return {
+    call,
+    model: data?.model || model,
+    input_tokens: usage.input_tokens || 0,
+    output_tokens: usage.output_tokens || 0,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
+    cache_read_input_tokens: usage.cache_read_input_tokens || 0,
+  };
+}
+
 module.exports = {
   REVIEW_JSON_SCHEMA,
   requestReview,
+  usageOf,
   extractReviewJson,
   parseReviewText,
 };

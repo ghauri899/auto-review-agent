@@ -13,7 +13,7 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      # No `actions/*` steps anywhere in this workflow: the Staunchglobal
+      # No `actions/*` steps anywhere in this workflow: the org's
       # Actions policy only allows actions from repositories the org owns, so
       # actions/checkout and actions/setup-node fail the run at startup.
       # Plain git + the Node already on the runner image cover both.

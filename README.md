@@ -1,6 +1,6 @@
 # Ghaurlock PR Review Agent
 
-Centralized Claude-powered PR review agent for all Staunchglobal org repos. Every project calls this repo's reusable workflow instead of keeping its own copy of the review logic — update the logic here once, it applies everywhere.
+Centralized Claude-powered PR review agent for every repo that calls it. Every project calls this repo's reusable workflow instead of keeping its own copy of the review logic — update the logic here once, it applies everywhere.
 
 ## How it works
 
@@ -35,7 +35,7 @@ test/                  # node:test unit tests
 
 ## One-time org setup
 
-Since this repo is private, allow other org repos to call its reusable workflow **and** its composite action: in **this repo's** Settings → Actions → General → Access, set "Accessible from repositories in the 'Staunchglobal' organization" (or list specific repos). Without this, other repos' `uses: Staunchglobal/auto-review-agent/...` calls will fail with a permissions error.
+Since this repo is private, allow other org repos to call its reusable workflow **and** its composite action: in **this repo's** Settings → Actions → General → Access, set "Accessible from repositories owned by 'ghauri899'" (or list specific repos). Without this, other repos' `uses: ghauri899/auto-review-agent/...` calls will fail with a permissions error.
 
 ## Adding review to a new repo
 
@@ -57,7 +57,7 @@ permissions:
 
 jobs:
   review:
-    uses: Staunchglobal/auto-review-agent/.github/workflows/claude-pr-review.yml@main
+    uses: ghauri899/auto-review-agent/.github/workflows/claude-pr-review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -121,9 +121,13 @@ When a finding is fixed or dismissed, its thread is not deleted: Inspector G rep
 Inspector G flags problems the PR's own code creates — never pre-existing issues in code the PR did not change, however serious. Two gates enforce this between Claude's raw findings and the PR:
 
 1. **Scope check (deterministic, free).** The diff Claude reads carries new-file line numbers in a left gutter, and every new finding must cite them. A finding is kept only if it points at a file the PR touches, on or within two lines of a line the PR added or deleted. Anything else is dropped before it is published. An unchanged caller that the PR newly breaks is reported against the changed line that breaks it.
-2. **Verification pass.** A second model (`VERIFY_MODEL` in `src/constants.js`, Sonnet by default) tries to disprove each surviving new finding and separately judges whether it would already exist on the base branch. Rejected and pre-existing findings are dropped. If the verifier errors or skips a finding, the finding is kept — a broken second pass must never hide a real bug.
+2. **Verification pass.** A second call (`VERIFY_MODEL` and `VERIFY_EFFORT` in `src/constants.js`, Sonnet 5.5 at medium effort by default) tries to disprove each surviving new finding and separately judges whether it would already exist on the base branch. Rejected and pre-existing findings are dropped. If the verifier errors or skips a finding, the finding is kept — a broken second pass must never hide a real bug.
 
 Both gates apply to **new** findings only. A finding already published on an earlier run is never silently dropped; it closes by being fixed or dismissed. Dropped findings are listed in the Actions log, and the review shows a one-line count (`🛡️ 3 possible findings were double-checked and left out…`).
+
+### Model
+
+Reviews run on Claude Sonnet 5.5 at high effort (`CLAUDE_MODEL` and `REVIEW_EFFORT` in `src/constants.js`), which costs half of Opus 5.5 per token. Both calls opt into server-side refusal fallback (`fallbacks: "default"`), so a safety-classifier decline on security code reruns on the recommended model instead of losing the review. To switch back to Opus, set `CLAUDE_MODEL` to `claude-opus-5-5` and `REVIEW_EFFORT` to `medium`.
 
 ### What Claude sees besides the diff
 
@@ -160,6 +164,17 @@ So that a carried-forward finding can never get stuck open forever, it is closed
 Failing those, dismissing it by number always works.
 
 Do not delete the Inspector G review comment — its hidden data is the bot-owned source of truth for `head_sha`, issue ids, and dismissals. If it is deleted, the next run starts over from review #1. When the review and the data together exceed GitHub's 65,000-character comment limit, the data is compacted first and the review text is shortened second; the data itself is never dropped.
+
+## Tracking and cost records
+
+Every run uploads a JSON record as a workflow artifact named `inspector-g-event-<attempt>`, kept for 90 days (`src/record-event.js`). Each record holds:
+
+- **Who and where:** repository, PR number and author, who triggered the run, and the commits it covers with their authors.
+- **What was reviewed:** run number and outcome (`ok`, `replay`, `refusal`, `max_tokens`, `error`), and the size of the reviewed diff.
+- **What was found:** findings raised and open by severity, plus resolved, dismissed and filtered counts. Each new finding says where it came from: `first_review`, `this_push` (code the latest push changed), `late_catch` (code an earlier review already saw), or `unknown` when the previous commit could not be compared. This tag is for reporting only; it is not shown on the pull request and does not change what the review publishes.
+- **What it cost:** tokens per API call and model.
+
+Recording never fails the job. Token usage also appears in the job summary and as `INSPECTOR_G_USAGE` lines in the review step's log. A collector that combines these records across repositories into one report is planned separately.
 
 ## Updating the review logic
 

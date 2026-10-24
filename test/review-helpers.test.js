@@ -15,7 +15,7 @@ const {
 } = require('../src/format-comment');
 const { extractPayload, titleFromInline, isBotLogin } = require('../src/collect-context');
 const { extractReviewJson, requestReview } = require('../src/claude-client');
-const { buildUserPrompt } = require('../src/prompts');
+const { SYSTEM_PROMPT, buildUserPrompt } = require('../src/prompts');
 const { selectMustFixIssues, inlineCommentBody, buildCommentBody } = require('../src/post-comment');
 const { STICKY_MARKER } = require('../src/constants');
 
@@ -45,17 +45,17 @@ describe('summary formatting', () => {
 describe('re-run link', () => {
   const env = {
     GITHUB_SERVER_URL: 'https://github.com',
-    GITHUB_REPOSITORY: 'Staunchglobal/app',
+    GITHUB_REPOSITORY: 'example-org/app',
     GITHUB_RUN_ID: '12345',
   };
 
   it('builds the run URL from the Actions defaults', () => {
-    assert.equal(rerunLink(env), 'https://github.com/Staunchglobal/app/actions/runs/12345');
+    assert.equal(rerunLink(env), 'https://github.com/example-org/app/actions/runs/12345');
   });
 
   it('renders nothing outside Actions, so local runs stay clean', () => {
     assert.equal(rerunLink({}), '');
-    assert.equal(rerunFooter({ GITHUB_REPOSITORY: 'Staunchglobal/app' }), '');
+    assert.equal(rerunFooter({ GITHUB_REPOSITORY: 'example-org/app' }), '');
   });
 
   it('appends the footer to the end of the review', () => {
@@ -63,7 +63,7 @@ describe('re-run link', () => {
       { summary: 'x', score: 5, risk_level: 'LOW', issues: [], dismissed: [] },
       { env }
     );
-    assert.match(md, /Re-run this review\]\(https:\/\/github\.com\/Staunchglobal\/app\/actions\/runs\/12345\)/);
+    assert.match(md, /Re-run this review\]\(https:\/\/github\.com\/example-org\/app\/actions\/runs\/12345\)/);
     assert.match(md.trimEnd(), /<\/sub>$/);
   });
 
@@ -308,6 +308,20 @@ describe('requestReview', () => {
     assert.equal(schemaSent, true);
     assert.equal(data.id, 'msg');
   });
+
+  it('reviews on Sonnet 5.5 at high effort with refusal fallback on', async () => {
+    let sent;
+    const fetchImpl = async (_url, options) => {
+      sent = options;
+      return { ok: true, status: 200, json: async () => ({ id: 'msg' }) };
+    };
+    await requestReview({ apiKey: 'k', systemPrompt: 's', userPrompt: 'u', fetchImpl });
+    const body = JSON.parse(sent.body);
+    assert.equal(body.model, 'claude-sonnet-5-5');
+    assert.equal(body.output_config.effort, 'high');
+    assert.equal(body.fallbacks, 'default');
+    assert.equal(sent.headers['anthropic-beta'], 'server-side-fallback-2026-07-01');
+  });
 });
 
 describe('buildUserPrompt', () => {
@@ -434,3 +448,10 @@ function compactIssuesForTest(issues) {
     description: issue.description,
   }));
 }
+
+describe('finding limit', () => {
+  it('does not cap how many new findings a review may raise', () => {
+    assert.doesNotMatch(SYSTEM_PROMPT, /at most \d+ NEW issues/i);
+    assert.match(SYSTEM_PROMPT, /no limit on how many/);
+  });
+});

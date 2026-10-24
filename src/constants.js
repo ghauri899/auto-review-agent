@@ -35,15 +35,24 @@ const MIN_DIAGRAM_FILES = 3;
 // One mark per severity, used everywhere a finding appears: the description,
 // inline comments and the job summary. A 🔴 always means CRITICAL.
 const SEVERITY_EMOJI = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🔵' };
-// Review quality is almost entirely model judgment, so Inspector G runs on
-// the current Opus rather than the cheaper Sonnet tier.
-const CLAUDE_MODEL = 'claude-opus-5-5';
-const CLAUDE_MAX_TOKENS = 30_000;
-// The verification pass only confirms or rejects findings Opus already wrote
-// up, so it runs on Sonnet to keep the second call cheap. Swap to
-// CLAUDE_MODEL if it starts rejecting findings that are real.
+// Sonnet 5.5 costs half of Opus 5.5 per token. It runs at high effort to
+// keep review depth close to Opus 5.5 at medium. To go back, set
+// 'claude-opus-5-5' with effort 'medium'.
+const CLAUDE_MODEL = 'claude-sonnet-5-5';
+const REVIEW_EFFORT = 'high';
+// There is no cap on how many findings a review may raise, so the output
+// budget leaves room for a long list plus thinking. A response cut off at
+// this limit loses the whole review.
+const CLAUDE_MAX_TOKENS = 48_000;
+// The verification pass only confirms or rejects findings the review already
+// wrote up, so it stays at a lower effort.
 const VERIFY_MODEL = 'claude-sonnet-5-5';
+const VERIFY_EFFORT = 'medium';
 const VERIFY_MAX_TOKENS = 16_000;
+// Retries a safety-classifier decline on the model Anthropic recommends for
+// its category (a cyber decline on Sonnet 5.5 reruns on Sonnet 5), so a
+// review of security code is not lost to a false positive.
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 // Read-only context sent alongside the diff (src/repo-context.js).
 const MAX_CONTEXT_FILE_CHARS = 40_000;
@@ -58,7 +67,9 @@ const MAX_RULES_CHARS = 8_000;
 const MAX_LEARNED_DISMISSALS = 25;
 // Only these commenters can teach Inspector G what to stop flagging.
 const TRUSTED_ASSOCIATIONS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
-const CLAUDE_FETCH_TIMEOUT_MS = 120_000;
+// Just under the 300 s Node's fetch waits for response headers: the request
+// is not streamed, so headers only arrive once the whole review is written.
+const CLAUDE_FETCH_TIMEOUT_MS = 290_000;
 const CLAUDE_RETRY_ATTEMPTS = 3;
 
 const PATHS = {
@@ -66,6 +77,10 @@ const PATHS = {
   reviewContext: '/tmp/review-context.json',
   reviewTxt: '/tmp/review.txt',
   reviewJson: '/tmp/review.json',
+  // How the run went and what it spent, written even when the review fails.
+  runStats: '/tmp/review-run.json',
+  // One record per run, uploaded as an artifact for reporting (src/record-event.js).
+  event: '/tmp/inspector-g-event.json',
 };
 
 module.exports = {
@@ -87,9 +102,12 @@ module.exports = {
   MIN_DIAGRAM_FILES,
   SEVERITY_EMOJI,
   CLAUDE_MODEL,
+  REVIEW_EFFORT,
   CLAUDE_MAX_TOKENS,
   VERIFY_MODEL,
+  VERIFY_EFFORT,
   VERIFY_MAX_TOKENS,
+  FALLBACK_BETA,
   MAX_CONTEXT_FILE_CHARS,
   MAX_CONTEXT_FILES_CHARS,
   MAX_CONTEXT_USAGE_CHARS,
