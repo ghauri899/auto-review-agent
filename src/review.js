@@ -1,15 +1,15 @@
 'use strict';
 
 const fs = require('node:fs');
-const { MAX_DIFF_CHARS, PATHS } = require('./constants');
+const { MAX_DIFF_CHARS, CLAUDE_MODEL, PATHS } = require('./constants');
 const { isDismissed, assignIssueIds, collectDismissed, redactSecrets } = require('./shared');
 const { clampScore, deriveScore, deriveRiskLevel, appendScoreHistory } = require('./scoring');
 const { assembleReviewDiff, diffFilePaths } = require('./assemble-diff');
 const { SYSTEM_PROMPT, buildUserPrompt } = require('./prompts');
-const { requestReview, extractReviewJson } = require('./claude-client');
+const { requestReview, extractReviewJson, usageOf } = require('./claude-client');
 const { formatReviewComment, rerunLink } = require('./format-comment');
 const { annotateDiff, changedLineMap, checkPrScope, inlinePlacement } = require('./diff-lines');
-const { gatherRepoContext } = require('./repo-context');
+const { gatherRepoContext, changesSinceReview } = require('./repo-context');
 const { verifyFindings } = require('./verify');
 
 function parsePrTitle(raw) {
@@ -129,7 +129,7 @@ function isNewFinding(issue, previous) {
 //      added or changed (src/diff-lines.js).
 //   2. Verification — a second model tries to disprove each survivor and
 //      judges whether it predates the PR (src/verify.js).
-async function screenNewFindings({ issues, previous, lineMap, assembled, repoContext, learned, apiKey, fetchImpl }) {
+async function screenNewFindings({ issues, previous, lineMap, assembled, repoContext, learned, apiKey, fetchImpl, usage = null }) {
   const carried = [];
   const candidates = [];
   const outOfScope = [];
@@ -143,7 +143,16 @@ async function screenNewFindings({ issues, previous, lineMap, assembled, repoCon
     else outOfScope.push({ issue, reason: scope.reason });
   }
 
-  const verified = await verifyFindings({ candidates, assembled, repoContext, learned, apiKey, fetchImpl, redact: redactSecrets });
+  const verified = await verifyFindings({
+    candidates,
+    assembled,
+    repoContext,
+    learned,
+    apiKey,
+    fetchImpl,
+    redact: redactSecrets,
+    usage,
+  });
 
   for (const { issue, reason } of outOfScope) {
     console.log(`Dropped (outside this PR's changes: ${reason}): ${issue.file}:${issue.line_reference || '-'} ${issue.title}`);
@@ -173,15 +182,48 @@ function placeInline(issues, lineMap) {
   }
 }
 
-async function runReview({
-  diffPath,
-  env = process.env,
-  writeFile = (file, data) => fs.writeFileSync(file, data),
-  readFile = (file) => fs.readFileSync(file, 'utf8'),
-  exists = (file) => fs.existsSync(file),
-  fetchImpl = fetch,
-  gitImpl = undefined,
-} = {}) {
+// For the tracking record only (src/record-event.js): marks a new finding on
+// a later run whose code the latest push did not touch, so reporting can tell
+// "the fix introduced this" apart from "an earlier review missed this". The
+// mark is never shown and does not affect which findings are published.
+function markLateCatches(issues, pushLineMap) {
+  if (!pushLineMap) return;
+  for (const issue of issues || []) {
+    if (issue.status === 'new' && !checkPrScope(issue, pushLineMap).inScope) issue.late_catch = true;
+  }
+}
+
+// Every run leaves a record of how it went and what it spent, even when it
+// fails part-way: src/record-event.js turns it into the run's tracking event.
+async function runReview(options = {}) {
+  const { writeFile = (file, data) => fs.writeFileSync(file, data) } = options;
+  const stats = { kind: 'error', usage: [], late_catch_check: false };
+  try {
+    const result = await reviewPullRequest(options, stats);
+    stats.kind = result.kind;
+    return result;
+  } finally {
+    try {
+      writeFile(PATHS.runStats, JSON.stringify(stats));
+    } catch (err) {
+      console.log(`Could not write the run stats: ${err.message}`);
+    }
+    for (const call of stats.usage) console.log(`INSPECTOR_G_USAGE ${JSON.stringify(call)}`);
+  }
+}
+
+async function reviewPullRequest(
+  {
+    diffPath,
+    env = process.env,
+    writeFile = (file, data) => fs.writeFileSync(file, data),
+    readFile = (file) => fs.readFileSync(file, 'utf8'),
+    exists = (file) => fs.existsSync(file),
+    fetchImpl = fetch,
+    gitImpl = undefined,
+  } = {},
+  stats
+) {
   const retryLink = rerunLink(env);
   const retryHint = retryLink ? ` [↻ Re-run this review](${retryLink}) → **Re-run all jobs**.` : '';
   const fullDiff = readFile(diffPath);
@@ -258,6 +300,7 @@ async function runReview({
     userPrompt,
     fetchImpl,
   });
+  stats.usage.push(usageOf('review', CLAUDE_MODEL, data));
 
   const extracted = extractReviewJson(data);
 
@@ -288,8 +331,14 @@ async function runReview({
     learned,
     apiKey: env.ANTHROPIC_API_KEY,
     fetchImpl,
+    usage: stats.usage,
   });
   extracted.review.issues = screened.issues;
+  const pushLineMap = previous
+    ? changesSinceReview({ previousSha: previous.head_sha, headSha: env.HEAD_SHA, ...(gitImpl ? { git: gitImpl } : {}) })
+    : null;
+  stats.late_catch_check = Boolean(pushLineMap);
+  markLateCatches(extracted.review.issues, pushLineMap);
 
   const review = finalizeReview(extracted.review, {
     previous,

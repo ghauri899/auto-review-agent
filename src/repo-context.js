@@ -10,6 +10,7 @@ const {
   MAX_RULES_CHARS,
   RULES_FILE,
 } = require('./constants');
+const { changedLineMap } = require('./diff-lines');
 
 function defaultGit(args) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
@@ -153,7 +154,20 @@ function gatherRepoContext({ diff, lineMap, headSha, baseSha, git = defaultGit }
   }
 }
 
+// What changed between the last reviewed commit and this one, as a line map
+// (src/diff-lines.js). null when there is no earlier review or its commit is
+// gone (a force-push).
+function changesSinceReview({ previousSha, headSha, git = defaultGit }) {
+  if (!previousSha || !headSha || previousSha === headSha) return null;
+  try {
+    return changedLineMap(git(['diff', previousSha, headSha]));
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
+  changesSinceReview,
   changedSymbols,
   readTouchedFiles,
   findUsages,

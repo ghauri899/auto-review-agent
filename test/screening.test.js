@@ -205,6 +205,99 @@ describe('runReview PR-scope screening', () => {
     assert.equal(calls, 1, 'no verification call when there are no new findings');
     assert.deepEqual(result.review.issues.map((issue) => issue.id), [1]);
   });
+
+  describe('tracking', () => {
+    // The last push only touched another file, so src/auth.js L11 was already
+    // reviewed on the previous run.
+    const pushDiff = [
+      'diff --git a/src/other.js b/src/other.js',
+      '--- a/src/other.js',
+      '+++ b/src/other.js',
+      '@@ -1,1 +1,1 @@',
+      '-old',
+      '+new',
+      '',
+    ].join('\n');
+    const previous = { head_sha: 'old', run_count: 1, next_id: 1, issues: [] };
+
+    async function reviewWith(issues, git) {
+      const fs = memoryFs({ '/tmp/pr.diff': diff, '/tmp/ctx.json': JSON.stringify({ previous, dismissals: [] }) });
+      let calls = 0;
+      const fetchImpl = async () => {
+        calls += 1;
+        const body =
+          calls === 1
+            ? {
+                summary: { verdict: 'v', context: '' },
+                score: 4,
+                score_breakdown: { security: 4, correctness: 4, performance: 4, maintainability: 4, best_practices: 4 },
+                score_rationale: '',
+                issues,
+              }
+            : { verdicts: issues.map((_, index) => ({ index, verdict: 'confirmed', introduced_by_pr: true, reason: '' })) };
+        return {
+          ok: true,
+          json: async () => ({
+            stop_reason: 'end_turn',
+            model: calls === 1 ? 'claude-opus-5-5' : 'claude-sonnet-5-5',
+            usage: { input_tokens: 100 * calls, output_tokens: 10 * calls },
+            content: [{ type: 'text', text: JSON.stringify(body) }],
+          }),
+        };
+      };
+      const result = await runReview({
+        diffPath: '/tmp/pr.diff',
+        env: { REVIEW_CONTEXT_PATH: '/tmp/ctx.json', HEAD_SHA: 'new' },
+        fetchImpl,
+        gitImpl: git,
+        ...fs,
+      });
+      return { result, fs };
+    }
+
+    const gitWithPush = (args) => {
+      if (args[0] === 'diff' && args[1] === 'old' && args[2] === 'new') return pushDiff;
+      throw new Error('not in this fake');
+    };
+
+    it('records token usage for both calls, even alongside the review', async () => {
+      const { fs } = await reviewWith([finding({ title: 'A' })], gitWithPush);
+      const stats = JSON.parse(fs.store[PATHS.runStats]);
+      assert.equal(stats.kind, 'ok');
+      assert.equal(stats.late_catch_check, true);
+      assert.deepEqual(
+        stats.usage.map((call) => [call.call, call.model, call.input_tokens, call.output_tokens]),
+        [
+          ['review', 'claude-opus-5-5', 100, 10],
+          ['verify', 'claude-sonnet-5-5', 200, 20],
+        ]
+      );
+    });
+
+    it('marks a new finding on code the latest push did not touch, without changing the review', async () => {
+      const issues = [finding({ title: 'Earlier miss', severity: 'MEDIUM', failure_mode: null })];
+      const late = await reviewWith(issues, gitWithPush);
+      const touched = await reviewWith(issues, (args) => (args[0] === 'diff' ? diff : gitWithPush(args)));
+      assert.equal(late.result.review.issues[0].late_catch, true);
+      assert.equal(touched.result.review.issues[0].late_catch, undefined);
+      assert.equal(late.fs.store[PATHS.reviewTxt], touched.fs.store[PATHS.reviewTxt]);
+    });
+
+    it('still writes the run stats when the review throws', async () => {
+      const fs = memoryFs({ '/tmp/pr.diff': diff });
+      await assert.rejects(
+        runReview({
+          diffPath: '/tmp/pr.diff',
+          env: {},
+          fetchImpl: async () => {
+            throw new Error('network down');
+          },
+          ...fs,
+        })
+      );
+      assert.deepEqual(JSON.parse(fs.store[PATHS.runStats]), { kind: 'error', usage: [], late_catch_check: false });
+    });
+  });
 });
 
 describe('screeningNote', () => {

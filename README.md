@@ -165,6 +165,17 @@ Failing those, dismissing it by number always works.
 
 Do not delete the Inspector G review comment — its hidden data is the bot-owned source of truth for `head_sha`, issue ids, and dismissals. If it is deleted, the next run starts over from review #1. When the review and the data together exceed GitHub's 65,000-character comment limit, the data is compacted first and the review text is shortened second; the data itself is never dropped.
 
+## Tracking and cost records
+
+Every run uploads a JSON record as a workflow artifact named `inspector-g-event-<attempt>`, kept for 90 days (`src/record-event.js`). Each record holds:
+
+- **Who and where:** repository, PR number and author, who triggered the run, and the commits it covers with their authors.
+- **What was reviewed:** run number and outcome (`ok`, `replay`, `refusal`, `max_tokens`, `error`), and the size of the reviewed diff.
+- **What was found:** findings raised and open by severity, plus resolved, dismissed and filtered counts. Each new finding says where it came from: `first_review`, `this_push` (code the latest push changed), `late_catch` (code an earlier review already saw), or `unknown` when the previous commit could not be compared. This tag is for reporting only; it is not shown on the pull request and does not change what the review publishes.
+- **What it cost:** tokens per API call and model.
+
+Recording never fails the job. Token usage also appears in the job summary and as `INSPECTOR_G_USAGE` lines in the review step's log. A collector that combines these records across repositories into one report is planned separately.
+
 ## Updating the review logic
 
 Edit the files under `src/` (or the composite action / scripts). Every caller repo that tracks `@main` picks up the change on its next PR run.

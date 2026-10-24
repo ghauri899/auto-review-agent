@@ -72,6 +72,10 @@ const PATHS = {
   reviewContext: '/tmp/review-context.json',
   reviewTxt: '/tmp/review.txt',
   reviewJson: '/tmp/review.json',
+  // How the run went and what it spent, written even when the review fails.
+  runStats: '/tmp/review-run.json',
+  // One record per run, uploaded as an artifact for reporting (src/record-event.js).
+  event: '/tmp/inspector-g-event.json',
 };
 
 module.exports = {

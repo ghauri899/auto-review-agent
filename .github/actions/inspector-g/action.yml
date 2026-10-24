@@ -61,6 +61,29 @@ runs:
           const { postComment } = require(path.resolve(process.env.INSPECTOR_G_ROOT, 'src/post-comment.js'));
           await postComment({ github, context, core });
 
+    # Tracking record for reporting (src/record-event.js). Never fails the job.
+    - name: Record review run
+      if: ${{ always() && !cancelled() }}
+      uses: actions/github-script@v7
+      env:
+        INSPECTOR_G_ROOT: ${{ github.action_path }}/../../..
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const path = require('node:path');
+          const { recordEvent } = require(path.resolve(process.env.INSPECTOR_G_ROOT, 'src/record-event.js'));
+          await recordEvent({ github, context, core });
+
+    - name: Upload review run record
+      if: ${{ always() && !cancelled() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: inspector-g-event-${{ github.run_attempt }}
+        path: /tmp/inspector-g-event.json
+        retention-days: 90
+        if-no-files-found: ignore
+        overwrite: true
+
     - name: Fail if review did not complete
       if: ${{ always() && !cancelled() }}
       shell: bash
