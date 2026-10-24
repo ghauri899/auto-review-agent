@@ -15,7 +15,7 @@ const {
 } = require('../src/format-comment');
 const { extractPayload, titleFromInline, isBotLogin } = require('../src/collect-context');
 const { extractReviewJson, requestReview } = require('../src/claude-client');
-const { buildUserPrompt } = require('../src/prompts');
+const { SYSTEM_PROMPT, buildUserPrompt } = require('../src/prompts');
 const { selectMustFixIssues, inlineCommentBody, buildCommentBody } = require('../src/post-comment');
 const { STICKY_MARKER } = require('../src/constants');
 
@@ -448,3 +448,10 @@ function compactIssuesForTest(issues) {
     description: issue.description,
   }));
 }
+
+describe('finding limit', () => {
+  it('does not cap how many new findings a review may raise', () => {
+    assert.doesNotMatch(SYSTEM_PROMPT, /at most \d+ NEW issues/i);
+    assert.match(SYSTEM_PROMPT, /no limit on how many/);
+  });
+});
