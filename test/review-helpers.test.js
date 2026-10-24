@@ -308,6 +308,20 @@ describe('requestReview', () => {
     assert.equal(schemaSent, true);
     assert.equal(data.id, 'msg');
   });
+
+  it('reviews on Sonnet 5.5 at high effort with refusal fallback on', async () => {
+    let sent;
+    const fetchImpl = async (_url, options) => {
+      sent = options;
+      return { ok: true, status: 200, json: async () => ({ id: 'msg' }) };
+    };
+    await requestReview({ apiKey: 'k', systemPrompt: 's', userPrompt: 'u', fetchImpl });
+    const body = JSON.parse(sent.body);
+    assert.equal(body.model, 'claude-sonnet-5-5');
+    assert.equal(body.output_config.effort, 'high');
+    assert.equal(body.fallbacks, 'default');
+    assert.equal(sent.headers['anthropic-beta'], 'server-side-fallback-2026-07-01');
+  });
 });
 
 describe('buildUserPrompt', () => {

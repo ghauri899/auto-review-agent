@@ -1,6 +1,6 @@
 'use strict';
 
-const { VERIFY_MODEL, VERIFY_MAX_TOKENS } = require('./constants');
+const { VERIFY_MODEL, VERIFY_EFFORT, VERIFY_MAX_TOKENS } = require('./constants');
 const { buildContextSections } = require('./prompts');
 const { requestReview, extractReviewJson } = require('./claude-client');
 
@@ -80,6 +80,7 @@ async function verifyFindings({ candidates, assembled, repoContext, learned = []
       userPrompt: redact(buildVerifyPrompt({ candidates, assembled, repoContext, learned })),
       model: VERIFY_MODEL,
       maxTokens: VERIFY_MAX_TOKENS,
+      effort: VERIFY_EFFORT,
       schema: VERIFY_JSON_SCHEMA,
       fetchImpl,
     });

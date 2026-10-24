@@ -121,9 +121,13 @@ When a finding is fixed or dismissed, its thread is not deleted: Inspector G rep
 Inspector G flags problems the PR's own code creates — never pre-existing issues in code the PR did not change, however serious. Two gates enforce this between Claude's raw findings and the PR:
 
 1. **Scope check (deterministic, free).** The diff Claude reads carries new-file line numbers in a left gutter, and every new finding must cite them. A finding is kept only if it points at a file the PR touches, on or within two lines of a line the PR added or deleted. Anything else is dropped before it is published. An unchanged caller that the PR newly breaks is reported against the changed line that breaks it.
-2. **Verification pass.** A second model (`VERIFY_MODEL` in `src/constants.js`, Sonnet by default) tries to disprove each surviving new finding and separately judges whether it would already exist on the base branch. Rejected and pre-existing findings are dropped. If the verifier errors or skips a finding, the finding is kept — a broken second pass must never hide a real bug.
+2. **Verification pass.** A second call (`VERIFY_MODEL` and `VERIFY_EFFORT` in `src/constants.js`, Sonnet 5.5 at medium effort by default) tries to disprove each surviving new finding and separately judges whether it would already exist on the base branch. Rejected and pre-existing findings are dropped. If the verifier errors or skips a finding, the finding is kept — a broken second pass must never hide a real bug.
 
 Both gates apply to **new** findings only. A finding already published on an earlier run is never silently dropped; it closes by being fixed or dismissed. Dropped findings are listed in the Actions log, and the review shows a one-line count (`🛡️ 3 possible findings were double-checked and left out…`).
+
+### Model
+
+Reviews run on Claude Sonnet 5.5 at high effort (`CLAUDE_MODEL` and `REVIEW_EFFORT` in `src/constants.js`), which costs half of Opus 5.5 per token. Both calls opt into server-side refusal fallback (`fallbacks: "default"`), so a safety-classifier decline on security code reruns on the recommended model instead of losing the review. To switch back to Opus, set `CLAUDE_MODEL` to `claude-opus-5-5` and `REVIEW_EFFORT` to `medium`.
 
 ### What Claude sees besides the diff
 
