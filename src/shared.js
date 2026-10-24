@@ -331,9 +331,9 @@ function assignIssueIds(issues, previous = {}, dismissals = [], options = {}) {
   });
 
   // Claude not mentioning a previously open finding is not evidence that it
-  // was fixed — the per-run cap on new findings, a truncated diff, or a
-  // paraphrased title can all drop one from the response. Only an explicit
-  // "resolved" closes a finding; anything unmentioned stays open.
+  // was fixed — a truncated diff or a paraphrased title can drop one from
+  // the response. Only an explicit "resolved" closes a finding; anything
+  // unmentioned stays open.
   const carriedForward = [];
   for (const [idx, prev] of prevIssues.entries()) {
     if (used.has(idx)) continue;

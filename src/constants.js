@@ -40,7 +40,10 @@ const SEVERITY_EMOJI = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '�
 // 'claude-opus-5-5' with effort 'medium'.
 const CLAUDE_MODEL = 'claude-sonnet-5-5';
 const REVIEW_EFFORT = 'high';
-const CLAUDE_MAX_TOKENS = 30_000;
+// There is no cap on how many findings a review may raise, so the output
+// budget leaves room for a long list plus thinking. A response cut off at
+// this limit loses the whole review.
+const CLAUDE_MAX_TOKENS = 48_000;
 // The verification pass only confirms or rejects findings the review already
 // wrote up, so it stays at a lower effort.
 const VERIFY_MODEL = 'claude-sonnet-5-5';
@@ -64,7 +67,9 @@ const MAX_RULES_CHARS = 8_000;
 const MAX_LEARNED_DISMISSALS = 25;
 // Only these commenters can teach Inspector G what to stop flagging.
 const TRUSTED_ASSOCIATIONS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
-const CLAUDE_FETCH_TIMEOUT_MS = 120_000;
+// Just under the 300 s Node's fetch waits for response headers: the request
+// is not streamed, so headers only arrive once the whole review is written.
+const CLAUDE_FETCH_TIMEOUT_MS = 290_000;
 const CLAUDE_RETRY_ATTEMPTS = 3;
 
 const PATHS = {
