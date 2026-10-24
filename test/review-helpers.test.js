@@ -45,17 +45,17 @@ describe('summary formatting', () => {
 describe('re-run link', () => {
   const env = {
     GITHUB_SERVER_URL: 'https://github.com',
-    GITHUB_REPOSITORY: 'Staunchglobal/app',
+    GITHUB_REPOSITORY: 'example-org/app',
     GITHUB_RUN_ID: '12345',
   };
 
   it('builds the run URL from the Actions defaults', () => {
-    assert.equal(rerunLink(env), 'https://github.com/Staunchglobal/app/actions/runs/12345');
+    assert.equal(rerunLink(env), 'https://github.com/example-org/app/actions/runs/12345');
   });
 
   it('renders nothing outside Actions, so local runs stay clean', () => {
     assert.equal(rerunLink({}), '');
-    assert.equal(rerunFooter({ GITHUB_REPOSITORY: 'Staunchglobal/app' }), '');
+    assert.equal(rerunFooter({ GITHUB_REPOSITORY: 'example-org/app' }), '');
   });
 
   it('appends the footer to the end of the review', () => {
@@ -63,7 +63,7 @@ describe('re-run link', () => {
       { summary: 'x', score: 5, risk_level: 'LOW', issues: [], dismissed: [] },
       { env }
     );
-    assert.match(md, /Re-run this review\]\(https:\/\/github\.com\/Staunchglobal\/app\/actions\/runs\/12345\)/);
+    assert.match(md, /Re-run this review\]\(https:\/\/github\.com\/example-org\/app\/actions\/runs\/12345\)/);
     assert.match(md.trimEnd(), /<\/sub>$/);
   });
 

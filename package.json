@@ -1,7 +1,7 @@
 {
   "name": "auto-review-agent",
   "private": true,
-  "description": "Inspector G — centralized Claude PR review agent for Staunchglobal",
+  "description": "Inspector G — centralized Claude PR review agent",
   "scripts": {
     "test": "node --test test/*.test.js"
   }
