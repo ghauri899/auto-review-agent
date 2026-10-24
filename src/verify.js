@@ -2,7 +2,7 @@
 
 const { VERIFY_MODEL, VERIFY_MAX_TOKENS } = require('./constants');
 const { buildContextSections } = require('./prompts');
-const { requestReview, extractReviewJson } = require('./claude-client');
+const { requestReview, extractReviewJson, usageOf } = require('./claude-client');
 
 const VERIFY_JSON_SCHEMA = {
   type: 'object',
@@ -69,7 +69,16 @@ function buildVerifyPrompt({ candidates, assembled, repoContext, learned }) {
 //
 // Fails open: if the verifier errors or skips a candidate, that candidate is
 // kept. A broken second pass must never silently hide a real bug.
-async function verifyFindings({ candidates, assembled, repoContext, learned = [], apiKey, fetchImpl, redact = (text) => text }) {
+async function verifyFindings({
+  candidates,
+  assembled,
+  repoContext,
+  learned = [],
+  apiKey,
+  fetchImpl,
+  redact = (text) => text,
+  usage = null,
+}) {
   if (!candidates.length) return { kept: [], rejected: [], verified: false };
 
   let verdicts;
@@ -83,6 +92,7 @@ async function verifyFindings({ candidates, assembled, repoContext, learned = []
       schema: VERIFY_JSON_SCHEMA,
       fetchImpl,
     });
+    usage?.push(usageOf('verify', VERIFY_MODEL, data));
     const extracted = extractReviewJson(data);
     if (extracted.kind !== 'ok' || !Array.isArray(extracted.review?.verdicts)) {
       console.log(`Verification pass returned no verdicts (${extracted.kind}); keeping all ${candidates.length} new finding(s).`);

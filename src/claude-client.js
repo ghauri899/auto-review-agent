@@ -222,9 +222,24 @@ function extractReviewJson(data) {
   }
 }
 
+// Token counts for one call, as recorded in the run's usage log. Thinking is
+// billed as output and already counted in output_tokens.
+function usageOf(call, model, data) {
+  const usage = data?.usage || {};
+  return {
+    call,
+    model: data?.model || model,
+    input_tokens: usage.input_tokens || 0,
+    output_tokens: usage.output_tokens || 0,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
+    cache_read_input_tokens: usage.cache_read_input_tokens || 0,
+  };
+}
+
 module.exports = {
   REVIEW_JSON_SCHEMA,
   requestReview,
+  usageOf,
   extractReviewJson,
   parseReviewText,
 };
